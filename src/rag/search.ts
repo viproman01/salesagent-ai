@@ -1,6 +1,6 @@
 import pool from '../db';
-import { generateQueryEmbedding } from './embeddings';
 import { logger } from '../utils/logger';
+import { getCachedEmbedding } from '../utils/cacheEmbeddings';
 
 export interface KnowledgeChunk {
   id: string;
@@ -23,7 +23,7 @@ export async function searchKnowledge(
   topK = 3,
   threshold = 0.65
 ): Promise<KnowledgeChunk[]> {
-  const embedding = await generateQueryEmbedding(query);
+  const embedding = await getCachedEmbedding(query);
   const embeddingStr = `[${embedding.join(',')}]`;
 
   const result = await pool.query<KnowledgeChunk>(

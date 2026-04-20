@@ -2,7 +2,6 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { config } from './config';
@@ -19,6 +18,8 @@ import { handleTelegramWebhook } from './channels/telegram';
 import { handleVoximplantWebhook, handleVoiceWebSocket } from './channels/voice';
 import { followUpWorker } from './orchestrator/follow-up';
 import { metricsWorker } from './analytics/metrics';
+import { globalErrorHandler } from './middleware/errorHandler';
+import { apiLimit, chatLimit, webhookLimit } from './middleware/rateLimit';
 
 async function main() {
   // Проверяем подключение к БД
@@ -36,15 +37,10 @@ async function main() {
   }));
   app.use(compression());
 
-  // ---- Rate limiting (100 req/min per IP) ----
-  const limiter = rateLimit({
-    windowMs:      config.RATE_LIMIT_WINDOW_MS,
-    max:           config.RATE_LIMIT_MAX_REQUESTS,
-    standardHeaders: true,
-    legacyHeaders:   false,
-    message: { error: 'Too many requests, please try again later' },
-  });
-  app.use('/api/', limiter);
+  // ---- Rate limiting (granular per endpoint type) ----
+  app.use('/api/v1/conversations', chatLimit);
+  app.use('/api/v1/', apiLimit);
+  app.post('/api/webhooks/', webhookLimit);
 
   // ---- Парсинг тела ----
   app.use(express.json({ limit: '10mb' }));
@@ -75,10 +71,7 @@ async function main() {
   });
 
   // ---- Обработка ошибок ----
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    logger.error('Unhandled error', { error: err.message, stack: err.stack });
-    res.status(500).json({ error: 'Internal server error' });
-  });
+  app.use(globalErrorHandler);
 
   // ---- HTTP + WebSocket сервер ----
   const httpServer = createServer(app);
