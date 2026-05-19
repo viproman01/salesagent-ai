@@ -1,137 +1,74 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Search } from 'lucide-react';
 import api from '../api';
 import type { Conversation } from '../api';
 import ConversationView from '../components/ConversationView';
-import { MessageSquare, Mic, Send } from 'lucide-react';
+import ConversationList from '../components/ConversationList';
+import ChipFilterRow from '../components/ChipFilterRow';
+import { Input } from '../ui/Input';
+import { EmptyState } from '../ui/EmptyState';
 
-const CHANNEL_ICONS: Record<string, React.ReactNode> = {
-  whatsapp: <Send size={14} className="text-green-500" />,
-  telegram: <MessageSquare size={14} className="text-blue-500" />,
-  voice:    <Mic size={14} className="text-purple-500" />,
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  active:    'bg-green-100 text-green-700',
-  completed: 'bg-gray-100 text-gray-600',
-  failed:    'bg-red-100 text-red-700',
-  timeout:   'bg-yellow-100 text-yellow-700',
-};
-
-const STAGE_LABELS: Record<string, string> = {
-  new: 'Новый', contacted: 'Контакт', interested: 'Интерес',
-  objection: 'Возражение', negotiation: 'Переговоры',
-  meeting_booked: 'Встреча', closed_won: 'Закрыт ✓',
-  closed_lost: 'Потерян', nurturing: 'Прогрев',
-};
+const CHANNELS = [
+  { key: 'whatsapp',  label: 'WhatsApp' },
+  { key: 'telegram',  label: 'Telegram' },
+  { key: 'instagram', label: 'Instagram' },
+  { key: 'voice',     label: 'Voice' },
+];
 
 export default function Conversations() {
   const orgId = localStorage.getItem('orgId') ?? '';
-  const [channel, setChannel]   = useState('');
-  const [status, setStatus]     = useState('');
+  const [channel, setChannel] = useState<string | null>(null);
+  const [search,  setSearch]  = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['conversations', orgId, channel, status],
+    queryKey: ['conversations', orgId, channel],
     queryFn:  () => api.get(`/conversations/${orgId}`, {
-      params: { channel: channel || undefined, status: status || undefined, limit: 50 },
+      params: { channel: channel ?? undefined, limit: 200 },
     }).then(r => r.data as { conversations: Conversation[]; total: number }),
   });
 
+  const items = useMemo(() => {
+    const raw = data?.conversations ?? [];
+    if (!search.trim()) return raw;
+    const q = search.toLowerCase();
+    return raw.filter(c =>
+      (c.lead_name ?? '').toLowerCase().includes(q) ||
+      c.phone.toLowerCase().includes(q)
+    );
+  }, [data, search]);
+
   return (
-    <div className="flex gap-4 h-[calc(100vh-6rem)]">
-      {/* Список */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-bold text-gray-900">
-            Разговоры {data && <span className="text-sm font-normal text-gray-400">({data.total})</span>}
-          </h1>
-          <div className="flex gap-2">
-            <select
-              value={channel} onChange={e => setChannel(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Все каналы</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="telegram">Telegram</option>
-              <option value="voice">Голос</option>
-            </select>
-            <select
-              value={status} onChange={e => setStatus(e.target.value)}
-              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Все статусы</option>
-              <option value="active">Активные</option>
-              <option value="completed">Завершённые</option>
-              <option value="failed">Ошибка</option>
-            </select>
-          </div>
+    <div className="flex h-[calc(100vh-48px)]">
+      <aside className="w-[380px] flex flex-col border-r border-line bg-bg-1 shrink-0">
+        <div className="p-2 border-b border-line">
+          <Input
+            placeholder="Поиск разговоров…"
+            leftSlot={<Search size={13} className="text-fg-2" />}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
         </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-1 overflow-y-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-32 text-gray-400">Загрузка...</div>
-          ) : data?.conversations.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-gray-400">Нет разговоров</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Клиент</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Канал</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Этап</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Статус</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Сообщ.</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-500">Время</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {data?.conversations.map(conv => (
-                  <tr
-                    key={conv.id}
-                    onClick={() => setSelectedId(conv.id === selectedId ? null : conv.id)}
-                    className={`cursor-pointer hover:bg-gray-50 transition-colors ${
-                      conv.id === selectedId ? 'bg-brand-50' : ''
-                    }`}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{conv.lead_name ?? conv.phone}</div>
-                      <div className="text-xs text-gray-400">{conv.phone}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        {CHANNEL_ICONS[conv.channel]}
-                        <span className="capitalize">{conv.channel}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {STAGE_LABELS[conv.lead_stage] ?? conv.lead_stage}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[conv.status] ?? ''}`}>
-                        {conv.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">{conv.message_count}</td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">
-                      {new Date(conv.started_at).toLocaleDateString('ru-RU', {
-                        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
-                      })}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <ChipFilterRow chips={CHANNELS} value={channel} onChange={setChannel} />
+        <div className="flex-1 min-h-0">
+          <ConversationList
+            items={items}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            loading={isLoading}
+          />
         </div>
-      </div>
-
-      {/* Боковая панель с деталями */}
-      {selectedId && (
-        <div className="w-96 bg-white rounded-xl border border-gray-200 shadow-sm shrink-0 overflow-hidden flex flex-col">
-          <ConversationView convId={selectedId} onClose={() => setSelectedId(null)} />
-        </div>
-      )}
+      </aside>
+      <section className="flex-1 min-w-0">
+        {selectedId
+          ? <ConversationView convId={selectedId} onClose={() => setSelectedId(null)} />
+          : <EmptyState
+              title="Выбери разговор"
+              description="Кликни строку слева, чтобы открыть переписку."
+              className="h-full"
+            />}
+      </section>
     </div>
   );
 }

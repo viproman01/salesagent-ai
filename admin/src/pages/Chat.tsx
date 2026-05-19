@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import api from '../api';
 import { Send, Bot, User, Loader2 } from 'lucide-react';
+import api from '../api';
+import { Card } from '../ui/Card';
+import { Button } from '../ui/Button';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -8,10 +10,13 @@ interface Message {
   time: string;
 }
 
-/**
- * Веб-чат с AI-агентом Айгуль (без Telegram).
- * Использует тот же Claude Sonnet что и основной агент.
- */
+const SUGGESTIONS = [
+  'Хочу букет жене на день рождения',
+  'Что есть до 10 000 тенге?',
+  'Какие розы в наличии?',
+  'Сколько стоит доставка?',
+];
+
 export default function Chat() {
   const [sessionId] = useState(() => {
     const stored = sessionStorage.getItem('chat_session');
@@ -24,11 +29,11 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      text: 'Здравствуйте! 🌸 Я Айгуль, менеджер цветочного магазина в Алматы. Помогу подобрать букет и оформить доставку. Что ищете?',
+      text: 'Здравствуйте. Я Айгуль, менеджер цветочного магазина в Алматы. Помогу подобрать букет и оформить доставку. Что ищете?',
       time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput]   = useState('');
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -57,7 +62,7 @@ export default function Chat() {
         ?? (err as Error).message;
       setMessages(m => [...m, {
         role: 'assistant',
-        text: `❌ Ошибка: ${errMsg}`,
+        text: `Ошибка: ${errMsg}`,
         time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
       }]);
     } finally {
@@ -70,109 +75,92 @@ export default function Chat() {
     window.location.reload();
   };
 
-  const SUGGESTIONS = [
-    'Хочу букет жене на день рождения',
-    'Что есть до 10 000 тенге?',
-    'Какие розы в наличии?',
-    'Сколько стоит доставка?',
-  ];
-
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-col h-[calc(100vh-48px)] max-w-3xl mx-auto px-4 py-4">
+      <div className="flex items-center justify-between mb-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Чат с Айгуль</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Тестирование AI-агента в браузере</p>
+          <h1 className="text-[15px] font-semibold text-fg-0">Чат с Айгуль</h1>
+          <p className="text-[12px] text-fg-2 mt-0.5">Тестирование AI-агента в браузере</p>
         </div>
-        <button
-          onClick={reset}
-          className="text-xs text-gray-500 hover:text-gray-900 px-3 py-1.5 border border-gray-200 rounded-lg"
-        >
-          Новый разговор
-        </button>
+        <Button variant="secondary" size="sm" onClick={reset}>Новый разговор</Button>
       </div>
 
-      {/* Чат */}
-      <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                msg.role === 'user' ? 'bg-gray-200 text-gray-600' : 'bg-brand-500 text-white'
-              }`}>
-                {msg.role === 'user' ? <User size={15} /> : <Bot size={15} />}
-              </div>
-              <div className={`max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col`}>
-                <div className={`px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
-                  msg.role === 'user'
-                    ? 'bg-brand-500 text-white rounded-br-sm'
-                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+      <Card padding="none" className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {messages.map((msg, i) => {
+            const fromUser = msg.role === 'user';
+            return (
+              <div key={i} className={`flex gap-2 ${fromUser ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-7 h-7 rounded-full grid place-items-center shrink-0 ${
+                  fromUser ? 'bg-bg-2 text-fg-1' : 'bg-accent text-accent-fg'
                 }`}>
-                  {msg.text}
+                  {fromUser ? <User size={13} /> : <Bot size={13} />}
                 </div>
-                <span className="text-xs text-gray-400 mt-1 px-2">{msg.time}</span>
+                <div className={`max-w-[78%] ${fromUser ? 'items-end' : 'items-start'} flex flex-col`}>
+                  <div className={
+                    fromUser
+                      ? 'px-3 py-2 rounded-3 rounded-br-sm text-[13px] whitespace-pre-wrap bg-bg-2 text-fg-0 border border-line'
+                      : 'px-3 py-2 rounded-3 rounded-bl-sm text-[13px] whitespace-pre-wrap bg-accent/15 text-fg-0 border border-accent/30'
+                  }>
+                    {msg.text}
+                  </div>
+                  <span className="num text-[10px] text-fg-2 mt-1 px-1">{msg.time}</span>
+                </div>
               </div>
-            </div>
-          ))}
-
+            );
+          })}
           {loading && (
-            <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-full bg-brand-500 text-white flex items-center justify-center shrink-0">
-                <Bot size={15} />
+            <div className="flex gap-2">
+              <div className="w-7 h-7 rounded-full bg-accent text-accent-fg grid place-items-center shrink-0">
+                <Bot size={13} />
               </div>
-              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin text-gray-400" />
-                <span className="text-sm text-gray-400">Айгуль печатает...</span>
+              <div className="bg-bg-2 rounded-3 rounded-bl-sm px-3 py-2 flex items-center gap-2 border border-line">
+                <Loader2 size={12} className="animate-spin text-fg-2" />
+                <span className="text-[12px] text-fg-2">Айгуль печатает…</span>
               </div>
             </div>
           )}
-
           <div ref={endRef} />
         </div>
 
-        {/* Подсказки */}
         {messages.length <= 1 && (
-          <div className="px-5 py-3 border-t border-gray-100 bg-gray-50">
-            <div className="text-xs text-gray-500 mb-2">Попробуйте:</div>
-            <div className="flex flex-wrap gap-2">
+          <div className="px-4 py-3 border-t border-line bg-bg-2/40">
+            <div className="text-[10px] uppercase tracking-wider text-fg-2 mb-2">Попробуй</div>
+            <div className="flex flex-wrap gap-1.5">
               {SUGGESTIONS.map(s => (
                 <button
                   key={s}
                   onClick={() => setInput(s)}
-                  className="text-xs px-3 py-1.5 bg-white border border-gray-200 rounded-full hover:bg-brand-50 hover:border-brand-200 hover:text-brand-700 transition-colors"
-                >
-                  {s}
-                </button>
+                  className="text-[12px] px-2.5 h-7 rounded-full bg-bg-0 border border-line text-fg-1 hover:text-fg-0 hover:border-fg-2/30 transition-colors"
+                >{s}</button>
               ))}
             </div>
           </div>
         )}
 
-        {/* Input */}
-        <div className="p-4 border-t border-gray-100">
-          <div className="flex gap-2">
-            <input
+        <div className="p-3 border-t border-line">
+          <div className="flex gap-2 items-end">
+            <textarea
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
-              placeholder="Напишите сообщение..."
+              placeholder="Сообщение… ⌘+Enter — отправить"
               disabled={loading}
-              className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-50"
+              rows={1}
+              className="flex-1 bg-bg-1 border border-line rounded-2 p-2.5 text-[13px] resize-none min-h-[40px] max-h-[160px] text-fg-0 outline-none focus:border-accent disabled:opacity-50"
             />
-            <button
+            <Button
               onClick={() => void send()}
               disabled={loading || !input.trim()}
-              className="w-11 h-11 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl flex items-center justify-center transition-colors shrink-0"
-            >
-              <Send size={17} />
-            </button>
+              size="md"
+              iconLeft={<Send size={14} />}
+            >Отпр.</Button>
           </div>
-          <p className="text-xs text-gray-400 mt-2 text-center">
+          <p className="text-[10px] text-fg-2 mt-2 text-center">
             AI может вызывать инструменты: search_knowledge, update_lead, book_meeting
           </p>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

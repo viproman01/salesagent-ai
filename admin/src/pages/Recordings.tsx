@@ -1,15 +1,29 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Mic, Clock, Search } from 'lucide-react';
 import api from '../api';
 import type { Recording } from '../api';
 import AudioPlayer from '../components/AudioPlayer';
-import { Mic, Clock } from 'lucide-react';
+import { Card, CardHeader } from '../ui/Card';
+import { Input } from '../ui/Input';
+import { Badge } from '../ui/Badge';
+import { Skeleton } from '../ui/Skeleton';
+import { EmptyState } from '../ui/EmptyState';
+
+const HIGHLIGHT_TONE: Record<string, 'danger' | 'ok' | 'warn' | 'neutral'> = {
+  objection: 'danger',
+  agreement: 'ok',
+  pricing:   'warn',
+};
+
+const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 export default function Recordings() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [audioUrl, setAudioUrl]     = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
-  const [highlights, setHighlights] = useState<Array<{time_ms:number;type:string;text:string}>>([]);
+  const [highlights, setHighlights] = useState<Array<{ time_ms: number; type: string; text: string }>>([]);
+  const [search, setSearch] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['recordings'],
@@ -20,6 +34,7 @@ export default function Recordings() {
     setSelectedId(rec.id);
     setAudioUrl(null);
     setTranscript(null);
+    setHighlights([]);
     const [audioResp, transcriptResp] = await Promise.all([
       api.get(`/recordings/${rec.id}/audio`),
       api.get(`/recordings/${rec.id}/transcript`),
@@ -29,96 +44,106 @@ export default function Recordings() {
     setHighlights(transcriptResp.data.highlights ?? []);
   };
 
-  const HIGHLIGHT_COLORS: Record<string, string> = {
-    objection: 'bg-red-100 text-red-700 border-red-200',
-    agreement: 'bg-green-100 text-green-700 border-green-200',
-    pricing:   'bg-yellow-100 text-yellow-700 border-yellow-200',
-  };
+  const list = (data?.recordings ?? []).filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (r.lead_name ?? '').toLowerCase().includes(q) || (r.phone ?? '').toLowerCase().includes(q);
+  });
 
-  const fmt = (s: number) => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+  const selected = list.find(r => r.id === selectedId);
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-6rem)]">
-      {/* Список записей */}
-      <div className="w-80 shrink-0 flex flex-col">
-        <h1 className="text-xl font-bold text-gray-900 mb-4">Записи звонков</h1>
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex-1 overflow-y-auto">
-          {isLoading ? (
-            <div className="p-8 text-center text-gray-400">Загрузка...</div>
-          ) : data?.recordings.length === 0 ? (
-            <div className="p-8 text-center text-gray-400">
-              <Mic size={32} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Записей пока нет</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {data?.recordings.map(rec => (
-                <button
-                  key={rec.id}
-                  onClick={() => void selectRecording(rec)}
-                  className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
-                    rec.id === selectedId ? 'bg-brand-50 border-l-2 border-brand-500' : ''
-                  }`}
-                >
-                  <div className="font-medium text-sm text-gray-900">{rec.lead_name ?? rec.phone ?? '—'}</div>
-                  <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
-                    <Clock size={11} />
-                    <span>{fmt(rec.duration_seconds)}</span>
-                    <span>·</span>
-                    <span>{new Date(rec.created_at).toLocaleDateString('ru-RU')}</span>
-                  </div>
-                  {rec.quality_score && (
-                    <div className="mt-1">
-                      <span className={`text-xs font-medium ${
-                        rec.quality_score >= 0.7 ? 'text-green-600' : rec.quality_score >= 0.4 ? 'text-yellow-600' : 'text-red-600'
-                      }`}>
-                        Качество: {Math.round(rec.quality_score * 100)}%
-                      </span>
+    <div className="grid grid-cols-[320px_1fr] xl:grid-cols-[320px_1fr_320px] h-[calc(100vh-48px)]">
+      {/* List */}
+      <aside className="flex flex-col border-r border-line bg-bg-1 min-w-0">
+        <div className="p-2 border-b border-line">
+          <Input
+            placeholder="Поиск записей…"
+            leftSlot={<Search size={13} />}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading
+            ? <div className="p-2 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+            : list.length === 0
+              ? <EmptyState icon={<Mic size={22} />} title="Записей пока нет" className="h-full" />
+              : list.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => void selectRecording(r)}
+                    className={`w-full text-left p-3 border-b border-line transition-colors ${r.id === selectedId ? 'bg-bg-2' : 'hover:bg-bg-2/60'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[13px] text-fg-0 truncate">{r.lead_name ?? r.phone ?? '—'}</div>
+                      {r.quality_score != null && (
+                        <Badge tone={r.quality_score >= 0.7 ? 'ok' : r.quality_score >= 0.4 ? 'warn' : 'danger'} size="sm">
+                          {Math.round(r.quality_score * 100)}%
+                        </Badge>
+                      )}
                     </div>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+                    <div className="flex items-center gap-2 mt-1 num text-[11px] text-fg-2">
+                      <Clock size={10} />
+                      <span>{fmt(r.duration_seconds)}</span>
+                      <span>·</span>
+                      <span>{new Date(r.created_at).toLocaleDateString('ru-RU')}</span>
+                    </div>
+                  </button>
+                ))
+          }
         </div>
-      </div>
+      </aside>
 
-      {/* Плеер + транскрипт */}
-      {selectedId && (
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          {audioUrl && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-              <h3 className="font-semibold text-gray-900 mb-3">Воспроизведение</h3>
-              <AudioPlayer
-                url={audioUrl}
-                duration={data?.recordings.find(r => r.id === selectedId)?.duration_seconds ?? 0}
-              />
+      {/* Center: player + transcript */}
+      <section className="flex flex-col bg-bg-0 min-w-0">
+        {selected ? (
+          <>
+            <div className="p-4 border-b border-line">
+              {audioUrl
+                ? <AudioPlayer url={audioUrl} duration={selected.duration_seconds} />
+                : <div className="h-16 grid place-items-center text-fg-2 text-[12px]">Загрузка аудио…</div>}
             </div>
-          )}
+            <div className="flex-1 overflow-y-auto p-4">
+              {transcript
+                ? <pre className="text-[13px] text-fg-1 whitespace-pre-wrap font-sans leading-relaxed">{transcript}</pre>
+                : <Skeleton className="h-32 w-full" />}
+            </div>
+          </>
+        ) : (
+          <EmptyState title="Выбери запись" description="Слева — список звонков." className="h-full" />
+        )}
+      </section>
 
-          {highlights.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-              <h3 className="font-semibold text-gray-900 mb-3">Маркеры</h3>
-              <div className="flex flex-wrap gap-2">
-                {highlights.map((h, i) => (
-                  <span key={i} className={`px-2 py-1 rounded-lg text-xs border ${HIGHLIGHT_COLORS[h.type] ?? 'bg-gray-100'}`}>
-                    {fmt(Math.floor(h.time_ms/1000))} · {h.text}
-                  </span>
-                ))}
+      {/* Right: meta */}
+      <aside className="hidden xl:flex border-l border-line bg-bg-1 p-4 overflow-y-auto flex-col gap-3">
+        {selected ? (
+          <>
+            <Card padding="sm">
+              <CardHeader title="Метрики" />
+              <div className="space-y-2 text-[12px]">
+                <div className="flex justify-between"><span className="text-fg-2">Канал</span><span className="text-fg-0 capitalize">{selected.channel}</span></div>
+                <div className="flex justify-between"><span className="text-fg-2">Длительность</span><span className="num text-fg-0">{fmt(selected.duration_seconds)}</span></div>
+                <div className="flex justify-between"><span className="text-fg-2">Начало</span><span className="num text-fg-0">{new Date(selected.started_at).toLocaleString('ru-RU')}</span></div>
               </div>
-            </div>
-          )}
-
-          {transcript && (
-            <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm flex-1 overflow-y-auto">
-              <h3 className="font-semibold text-gray-900 mb-3">Транскрипт</h3>
-              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
-                {transcript}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
+            </Card>
+            {highlights.length > 0 && (
+              <Card padding="sm">
+                <CardHeader title="Маркеры" />
+                <div className="flex flex-wrap gap-1.5">
+                  {highlights.map((h, i) => (
+                    <Badge key={i} tone={HIGHLIGHT_TONE[h.type] ?? 'neutral'} size="sm">
+                      {fmt(Math.floor(h.time_ms / 1000))} · {h.text}
+                    </Badge>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </>
+        ) : (
+          <div className="text-fg-2 text-[12px] text-center mt-8">Выберите запись для деталей</div>
+        )}
+      </aside>
     </div>
   );
 }

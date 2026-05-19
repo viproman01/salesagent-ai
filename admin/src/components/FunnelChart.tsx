@@ -2,6 +2,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
 import type { FunnelItem } from '../api';
+import { Card, CardHeader } from '../ui/Card';
 
 const STAGE_LABELS: Record<string, string> = {
   new:           'Новые',
@@ -10,19 +11,19 @@ const STAGE_LABELS: Record<string, string> = {
   objection:     'Возражение',
   negotiation:   'Переговоры',
   meeting_booked:'Встреча',
-  closed_won:    'Закрыт ✓',
+  closed_won:    'Закрыт',
   closed_lost:   'Потерян',
   nurturing:     'Прогрев',
 };
 
 const STAGE_COLORS: Record<string, string> = {
-  new:           '#94a3b8',
+  new:           '#6b7280',
   contacted:     '#60a5fa',
   interested:    '#34d399',
   objection:     '#f87171',
   negotiation:   '#a78bfa',
   meeting_booked:'#fbbf24',
-  closed_won:    '#10b981',
+  closed_won:    '#00b14f',
   closed_lost:   '#ef4444',
   nurturing:     '#fb923c',
 };
@@ -37,23 +38,30 @@ export default function FunnelChart({ data }: Props) {
   }));
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <h3 className="font-semibold text-gray-900 mb-4">Воронка продаж</h3>
+    <Card>
+      <CardHeader title="Воронка продаж" />
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
-          <XAxis type="number" tick={{ fontSize: 12 }} />
-          <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={90} />
+          <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--fg-2)' }} stroke="var(--line)" />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--fg-1)' }} width={90} stroke="var(--line)" />
           <Tooltip
             formatter={(v: number) => [v, 'Лиды']}
-            contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }}
+            cursor={{ fill: 'rgba(255,255,255,.03)' }}
+            contentStyle={{
+              background: 'var(--bg-2)',
+              border:     '1px solid var(--line)',
+              borderRadius: '6px',
+              color: 'var(--fg-0)',
+              fontSize: 12,
+            }}
           />
-          <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={32}>
+          <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={28}>
             {chartData.map((entry, i) => (
-              <Cell key={i} fill={STAGE_COLORS[entry.stage] ?? '#94a3b8'} />
+              <Cell key={i} fill={STAGE_COLORS[entry.stage] ?? '#6b7280'} />
             ))}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-    </div>
+    </Card>
   );
 }
