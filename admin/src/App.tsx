@@ -1,17 +1,22 @@
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import CommandPalette from './components/CommandPalette';
 import { useHotkeys } from './hooks/useHotkeys';
-import Dashboard from './pages/Dashboard';
-import Conversations from './pages/Conversations';
-import Recordings from './pages/Recordings';
-import Knowledge from './pages/Knowledge';
-import Agents from './pages/Agents';
-import VoiceTest from './pages/VoiceTest';
-import Chat from './pages/Chat';
-import Login from './pages/Login';
+
+const Dashboard     = lazy(() => import('./pages/Dashboard'));
+const Conversations = lazy(() => import('./pages/Conversations'));
+const Recordings    = lazy(() => import('./pages/Recordings'));
+const Knowledge     = lazy(() => import('./pages/Knowledge'));
+const Agents        = lazy(() => import('./pages/Agents'));
+const VoiceTest     = lazy(() => import('./pages/VoiceTest'));
+const Chat          = lazy(() => import('./pages/Chat'));
+const Login         = lazy(() => import('./pages/Login'));
+
+const Fallback = () => (
+  <div className="h-full grid place-items-center text-fg-2 text-[13px]">Загрузка…</div>
+);
 
 function PrivateLayout() {
   const navigate = useNavigate();
@@ -36,16 +41,18 @@ function PrivateLayout() {
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar onOpenPalette={() => setPaletteOpen(true)} />
         <main className="flex-1 overflow-y-auto bg-bg-0">
-          <Routes>
-            <Route path="/"              element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard"     element={<Dashboard />} />
-            <Route path="/conversations" element={<Conversations />} />
-            <Route path="/recordings"    element={<Recordings />} />
-            <Route path="/knowledge"     element={<Knowledge />} />
-            <Route path="/agents"        element={<Agents />} />
-            <Route path="/voice-test"    element={<VoiceTest />} />
-            <Route path="/chat"          element={<Chat />} />
-          </Routes>
+          <Suspense fallback={<Fallback />}>
+            <Routes>
+              <Route path="/"              element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard"     element={<Dashboard />} />
+              <Route path="/conversations" element={<Conversations />} />
+              <Route path="/recordings"    element={<Recordings />} />
+              <Route path="/knowledge"     element={<Knowledge />} />
+              <Route path="/agents"        element={<Agents />} />
+              <Route path="/voice-test"    element={<VoiceTest />} />
+              <Route path="/chat"          element={<Chat />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
@@ -63,13 +70,15 @@ export default function App() {
   if (isAuth === null) return null;
 
   return (
-    <Routes>
-      <Route path="/login" element={
-        isAuth ? <Navigate to="/dashboard" /> : <Login onLogin={() => setIsAuth(true)} />
-      } />
-      <Route path="/*" element={
-        isAuth ? <PrivateLayout /> : <Navigate to="/login" />
-      } />
-    </Routes>
+    <Suspense fallback={<Fallback />}>
+      <Routes>
+        <Route path="/login" element={
+          isAuth ? <Navigate to="/dashboard" /> : <Login onLogin={() => setIsAuth(true)} />
+        } />
+        <Route path="/*" element={
+          isAuth ? <PrivateLayout /> : <Navigate to="/login" />
+        } />
+      </Routes>
+    </Suspense>
   );
 }

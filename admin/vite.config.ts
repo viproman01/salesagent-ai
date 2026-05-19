@@ -15,5 +15,20 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'charts':       ['recharts'],
+          'wavesurfer':   ['wavesurfer.js'],
+          'radix':        [
+            '@radix-ui/react-tooltip',
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-dropdown-menu',
+          ],
+        },
+      },
+    },
   },
 });
