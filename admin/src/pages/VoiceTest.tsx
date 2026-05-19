@@ -133,7 +133,7 @@ export default function VoiceTest() {
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = ctx;
 
-      const wsUrl = `ws://127.0.0.1:3002/ws/gemini-live?model=${encodeURIComponent(model)}`;
+      const wsUrl = `ws://127.0.0.1:3003/ws/gemini-live?model=${encodeURIComponent(model)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

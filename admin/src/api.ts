@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // В dev-режиме ходим напрямую на бэкенд (vite proxy капризничает в разных браузерах)
 const API_BASE = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV
-  ? 'http://127.0.0.1:3002/api/v1'
+  ? 'http://127.0.0.1:3003/api/v1'
   : '/api/v1';
 
 const api = axios.create({
