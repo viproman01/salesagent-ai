@@ -39,7 +39,13 @@ export function globalErrorHandler(
   });
 }
 
-export function asyncHandler(fn: Function) {
+export function asyncHandler(
+  fn: (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => unknown | Promise<unknown>
+) {
   return (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };

@@ -2,7 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import compression from 'compression';
-import { createServer } from 'http';
+import { createServer, type IncomingMessage } from 'http';
 import { WebSocketServer } from 'ws';
 import { config } from './config';
 import { logger } from './utils/logger';
@@ -15,7 +15,12 @@ import { agentsRouter } from './api/agents';
 import { recordingsRouter } from './api/recordings';
 import { handleWhatsAppWebhook } from './channels/whatsapp';
 import { handleTelegramWebhook } from './channels/telegram';
-import { handleVoximplantWebhook, handleVoiceWebSocket } from './channels/voice';
+import {
+  handleVoximplantWebhook,
+  handleVoiceWebSocket,
+  shutdownVoiceSessions,
+} from './channels/voice';
+import { authorizeVoiceWebSocketRequest } from './voice/telephony/voice-ws-auth';
 import { followUpWorker } from './orchestrator/follow-up';
 import { metricsWorker } from './analytics/metrics';
 import { globalErrorHandler } from './middleware/errorHandler';
@@ -76,10 +81,24 @@ async function main() {
   // ---- HTTP + WebSocket сервер ----
   const httpServer = createServer(app);
 
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws/voice' });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    path: '/ws/voice',
+    maxPayload: config.VOICE_WS_MAX_PAYLOAD_BYTES,
+    perMessageDeflate: false,
+    verifyClient: (info: { req: IncomingMessage }) =>
+      authorizeVoiceWebSocketRequest(
+        info.req,
+        config.VOICE_DEFAULT_ORG_ID,
+        config.VOICE_WS_AUTH_TOKEN
+      ).ok,
+  });
   wss.on('connection', (ws, req) => {
     handleVoiceWebSocket(ws, req).catch(err => {
       logger.error('Voice WebSocket handler error', { error: err });
+      if (ws.readyState === ws.OPEN) {
+        ws.close(1011, 'Voice handler failed');
+      }
     });
   });
 
@@ -101,18 +120,83 @@ async function main() {
   });
 
   // Graceful shutdown
-  const shutdown = async (signal: string) => {
-    logger.info(`Received ${signal}, shutting down gracefully`);
-    await followUpWorker.close();
-    await metricsWorker.close();
-    httpServer.close(() => {
-      logger.info('HTTP server closed');
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (signal: string): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+
+    shutdownPromise = (async () => {
+      logger.info(`Received ${signal}, shutting down gracefully`);
+
+      const webSocketServerClosed = new Promise<void>(resolve => {
+        wss.close(error => {
+          if (error) {
+            logger.error('Failed to close voice WebSocket server', {
+              error,
+            });
+          }
+          resolve();
+        });
+      });
+      for (const client of wss.clients) {
+        client.close(1001, 'Server shutdown');
+      }
+
+      const httpServerClosed = new Promise<void>(resolve => {
+        httpServer.close(error => {
+          if (error) {
+            logger.error('Failed to close HTTP server', { error });
+          } else {
+            logger.info('HTTP server closed');
+          }
+          resolve();
+        });
+      });
+
+      const voiceDrain = shutdownVoiceSessions();
+      const workerShutdown = Promise.allSettled([
+        followUpWorker.close(),
+        metricsWorker.close(),
+      ]);
+      const voiceResult = await voiceDrain;
+      if (!voiceResult.drained) {
+        logger.warn('Voice session shutdown deadline exceeded', {
+          pendingWork: voiceResult.pendingWork,
+          activeSessions: voiceResult.activeSessions,
+          initializingSessions: voiceResult.initializingSessions,
+        });
+      } else {
+        logger.info('Voice sessions drained');
+      }
+
+      // A peer may ignore the closing handshake. Finalization has already
+      // completed (or reached its bounded deadline), so force transport close.
+      for (const client of wss.clients) client.terminate();
+      const workerResults = await workerShutdown;
+      for (const result of workerResults) {
+        if (result.status === 'rejected') {
+          logger.error('Background worker shutdown failed', {
+            error: result.reason,
+          });
+        }
+      }
+      await Promise.all([webSocketServerClosed, httpServerClosed]);
       process.exit(0);
-    });
+    })();
+    return shutdownPromise;
   };
 
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT',  () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => {
+    void shutdown('SIGTERM').catch(error => {
+      logger.error('Graceful shutdown failed', { error });
+      process.exit(1);
+    });
+  });
+  process.on('SIGINT', () => {
+    void shutdown('SIGINT').catch(error => {
+      logger.error('Graceful shutdown failed', { error });
+      process.exit(1);
+    });
+  });
 }
 
 main().catch(err => {

@@ -4,7 +4,6 @@
  * Иначе — подключается к реальному Redis по URL.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 import { config } from '../config';

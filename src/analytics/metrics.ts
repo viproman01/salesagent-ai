@@ -7,7 +7,6 @@ import pool from '../db';
 const IS_MEMORY = config.REDIS_URL === 'memory';
 
 // Очередь для агрегации метрик
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const metricsQueue: Queue | null = IS_MEMORY ? null : new Queue('metrics', {
   connection: getRedisConnection(),
   defaultJobOptions: { removeOnComplete: 10, removeOnFail: 5 },

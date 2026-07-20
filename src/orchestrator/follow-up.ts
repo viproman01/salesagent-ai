@@ -18,7 +18,6 @@ interface FollowUpJob {
 const IS_MEMORY = config.REDIS_URL === 'memory';
 
 // Очередь для отложенных follow-up сообщений
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const followUpQueue: Queue<FollowUpJob> | null = IS_MEMORY ? null : new Queue<FollowUpJob>('follow-up', {
   connection: getRedisConnection(),
   defaultJobOptions: {
@@ -30,7 +29,6 @@ export const followUpQueue: Queue<FollowUpJob> | null = IS_MEMORY ? null : new Q
 });
 
 // Worker для обработки follow-up заданий
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const followUpWorker: Worker<FollowUpJob> | { run: () => Promise<void>; close: () => Promise<void>; on: () => void } = IS_MEMORY
   ? { run: async () => {}, close: async () => {}, on: () => {} }
   : new Worker<FollowUpJob>(

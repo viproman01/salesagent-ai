@@ -13,6 +13,8 @@ const agentSchema = z.object({
     voice:    z.string().default('Aoede'),
     language: z.string().default('ru-RU'),
     speed:    z.number().min(0.5).max(2.0).default(1.0),
+    fish_reference_id: z.string().uuid().optional(),
+    greeting: z.string().min(1).max(300).optional(),
   }).optional(),
   temperature:   z.number().min(0).max(1).default(0.7),
   max_tokens:    z.number().min(64).max(4096).default(1024),

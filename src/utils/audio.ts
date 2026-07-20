@@ -42,12 +42,34 @@ export function ulawToPcm16(ulawBuffer: Buffer): Buffer {
  * Downsample by taking every 2nd sample
  */
 export function pcm16ToUlaw(pcm16Buffer: Buffer): Buffer {
-  const inputSamples = pcm16Buffer.length / 2; // 2 bytes per sample
-  const outputSamples = Math.floor(inputSamples / 2); // downsample 16→8 kHz
+  return pcm16ToUlawAtSampleRate(pcm16Buffer, 16000);
+}
+
+/**
+ * Convert mono PCM16 at the supplied sample rate to μ-law 8 kHz.
+ * Fish Audio can already emit 8 kHz PCM, in which case no downsampling occurs.
+ */
+export function pcm16ToUlawAtSampleRate(
+  pcm16Buffer: Buffer,
+  sampleRateHz: number
+): Buffer {
+  if (pcm16Buffer.length % 2 !== 0) {
+    throw new Error('PCM16 buffer must contain complete 16-bit samples');
+  }
+  if (!Number.isInteger(sampleRateHz) || sampleRateHz < 8000) {
+    throw new Error('PCM16 input sample rate must be an integer >= 8000 Hz');
+  }
+
+  const inputSamples = pcm16Buffer.length / 2;
+  const outputSamples = Math.floor((inputSamples * 8000) / sampleRateHz);
   const output = Buffer.allocUnsafe(outputSamples);
 
   for (let i = 0; i < outputSamples; i++) {
-    const sample = pcm16Buffer.readInt16LE(i * 4); // skip every other sample
+    const inputIndex = Math.min(
+      inputSamples - 1,
+      Math.floor((i * sampleRateHz) / 8000)
+    );
+    const sample = pcm16Buffer.readInt16LE(inputIndex * 2);
     output[i] = linearToUlaw(sample);
   }
   return output;

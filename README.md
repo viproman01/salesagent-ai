@@ -9,9 +9,10 @@
 | Backend     | Node.js 20 + Express + TypeScript |
 | Database    | PostgreSQL 16 + pgvector |
 | Cache/Queue | Redis + BullMQ |
-| AI Voice    | Google Gemini Live (`gemini-3.1-flash-live-preview`) |
-| AI Text     | Anthropic Claude (`claude-sonnet-4-20250514`) |
-| Classifier  | Claude Haiku (`claude-haiku-4-5-20251001`) |
+| AI Voice    | Deepgram Flux → Claude fast/medium/deep → Fish Audio |
+| Voice fallback | AssemblyAI Streaming (cold STT) + Gemini Live (runtime rollback) |
+| AI Text     | Anthropic Claude |
+| Classifier  | Claude Haiku |
 | Телефония   | Voximplant |
 | WhatsApp    | Wazzup24 API |
 | Telegram    | Telegram Bot API |
@@ -85,6 +86,13 @@ npm run dev
 |-----------|---------|
 | `ANTHROPIC_API_KEY` | Ключ Anthropic Claude API |
 | `GOOGLE_API_KEY` | Ключ Google AI (Gemini + Embeddings) |
+| `VOICE_RUNTIME` | `pipeline` для нового контура, `gemini` для rollback |
+| `VOICE_DEFAULT_ORG_ID` | Единственный разрешённый tenant для voice WebSocket |
+| `VOICE_WS_AUTH_TOKEN` | Общий секрет Voximplant ↔ backend, минимум 32 символа |
+| `DEEPGRAM_API_KEY` | Основной streaming STT (Flux multilingual) |
+| `ASSEMBLYAI_API_KEY` | Опциональный cold fallback STT |
+| `FISH_API_KEY` | Ключ Fish Audio streaming TTS |
+| `FISH_TTS_REFERENCE_ID` | ID разрешённого клона/голоса Fish Audio |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
 | `WAZZUP24_API_KEY` | API-ключ Wazzup24 для WhatsApp |
@@ -95,6 +103,51 @@ npm run dev
 | `S3_ENDPOINT` | Endpoint S3/MinIO |
 
 Полный список — в `.env.example`.
+
+### Production voice pipeline
+
+Контур реального времени реализован полностью на уровне кода:
+
+- Voximplant передаёт и получает G.711 μ-law 8 kHz через защищённый media
+  WebSocket.
+- Deepgram Flux распознаёт речь и определяет границы реплик; при ошибке
+  подключения до первого аудио доступен cold fallback на AssemblyAI.
+- Fast и medium Claude запускаются параллельно. Deep запускается только при
+  высокой сложности или явной эскалации.
+- Семантический ledger не разрешает поздней модели противоречить уже
+  произнесённому ответу.
+- Fish Audio синтезирует только подтверждённые сегменты. Barge-in синхронно
+  отменяет LLM/TTS текущего поколения и очищает телефонный playback.
+- Приветствие прямо сообщает, что отвечает виртуальный помощник.
+
+Одна команда запускает lint, typecheck, весь voice test-suite, production build
+и проверку VoxEngine-скриптов:
+
+```bash
+npm run verify:voice
+```
+
+После заполнения `FISH_API_KEY` и `FISH_TTS_REFERENCE_ID` выполните реальный
+smoke-test голоса:
+
+```bash
+npm run smoke:fish-tts
+```
+
+Тест сохраняет запись в `/tmp/fish-tts-smoke.wav`. Затем настройте Voximplant:
+
+```bash
+npm run setup:voximplant
+```
+
+Полная процедура запуска, приёмки, наблюдаемости и rollback описана в
+[`docs/voice-pipeline-runbook.md`](docs/voice-pipeline-runbook.md). Технический
+план и статус реализации — в
+[`docs/План_внедрения_голосового_AI_агента.docx`](docs/План_внедрения_голосового_AI_агента.docx).
+
+Текущая реализация использует hosted API. H100 не требуется для запуска; слой
+`ModelRunner` и provider-контракты позволяют позже подключить self-hosted модели
+без изменения телефонного state machine.
 
 ---
 
@@ -127,7 +180,7 @@ npm run dev
 
 | Путь | Описание |
 |------|---------|
-| `WS /ws/voice?orgId=&phone=` | Аудиострим голосового звонка |
+| `WS /ws/voice?callId=&phone=&orgId=&protocol=vox-media-v1` | Авторизованный full-duplex media stream; заголовок `X-Voice-Token` обязателен |
 
 ---
 
@@ -153,6 +206,28 @@ npm run dev
   classifier.ts (Claude Haiku) → обновить этап лида
 ```
 
+Голосовой путь:
+
+```text
+Voximplant μ-law 8 kHz
+        │
+        ▼
+Deepgram Flux ── cold-open fallback ──► AssemblyAI
+        │
+        ▼
+Turn Manager / generation cancellation / barge-in
+        │
+        ├──► Fast Claude ───────┐
+        ├──► Medium Claude ─────┼──► semantic commit ledger
+        └──► Deep Claude (если нужен) ┘
+                                      │
+                                      ▼
+                          Fish Audio streaming TTS
+                                      │
+                                      ▼
+                         Voximplant playback + ACK
+```
+
 ---
 
 ## Структура проекта
@@ -174,7 +249,15 @@ salesagent-ai/
 │   ├── channels/
 │   │   ├── whatsapp.ts       — Wazzup24
 │   │   ├── telegram.ts       — Telegram Bot
-│   │   └── voice.ts          — Voximplant + Gemini Live
+│   │   └── voice.ts          — защищённый Voximplant media channel
+│   ├── voice/
+│   │   ├── configured-runtime.ts — composition root и runtime flag
+│   │   ├── realtime-runtime.ts   — full-duplex pipeline
+│   │   ├── turn-manager.ts       — endpointing/barge-in/cancellation
+│   │   ├── orchestrator.ts       — fast/medium/deep orchestration
+│   │   ├── models/               — Claude adapters
+│   │   ├── providers/            — Deepgram, AssemblyAI и Fish
+│   │   └── telephony/            — auth и Voximplant media protocol
 │   ├── crm/
 │   │   ├── amocrm.ts         — AmoCRM REST клиент
 │   │   └── adapter.ts        — Унифицированный адаптер

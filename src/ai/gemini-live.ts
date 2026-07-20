@@ -6,28 +6,30 @@ import { GEMINI_TOOL_DECLARATIONS, type ToolContext } from './tools';
 import { searchKnowledge } from '../rag/search';
 import { updateLeadStage } from '../crm/adapter';
 import pool from '../db';
+import {
+  type VoiceRuntime,
+  type VoiceRuntimeEvent,
+  type VoiceRuntimeEventHandler,
+} from '../voice/runtime';
 
-type BridgeEvent =
-  | { type: 'audio'; data: Buffer }
-  | { type: 'transcript'; text: string; isFinal: boolean }
-  | { type: 'tool_call'; name: string; args: Record<string, unknown> }
-  | { type: 'error'; error: string }
-  | { type: 'close' };
-
-export type BridgeEventHandler = (event: BridgeEvent) => void;
+export type BridgeEvent = VoiceRuntimeEvent;
+export type BridgeEventHandler = VoiceRuntimeEventHandler;
 
 /**
  * GeminiLiveVoiceBridge — WebSocket-мост между Voximplant и Gemini Live API.
  * Принимает аудио в формате μ-law 8kHz от Voximplant,
  * конвертирует в PCM16 16kHz для Gemini и наоборот.
  */
-export class GeminiLiveVoiceBridge {
+export class GeminiLiveVoiceBridge implements VoiceRuntime {
   private ws: WebSocket | null = null;
   private isConnected = false;
   private audioQueue: Buffer[] = [];
+  private audioQueueBytes = 0;
   private onEvent: BridgeEventHandler;
   private context: ToolContext;
   private systemPrompt: string;
+  private eventChain: Promise<void> = Promise.resolve();
+  private isDisconnecting = false;
 
   constructor(systemPrompt: string, context: ToolContext, onEvent: BridgeEventHandler) {
     this.systemPrompt = systemPrompt;
@@ -48,6 +50,10 @@ export class GeminiLiveVoiceBridge {
         logger.info('Gemini Live: WebSocket connected', this.context);
         this.sendSetupMessage();
         this.isConnected = true;
+        const queued = this.audioQueue;
+        this.audioQueue = [];
+        this.audioQueueBytes = 0;
+        for (const audio of queued) this.sendAudio(audio);
         resolve();
       });
 
@@ -57,14 +63,14 @@ export class GeminiLiveVoiceBridge {
 
       this.ws.on('error', (err: Error) => {
         logger.error('Gemini Live: WebSocket error', { error: err.message, ...this.context });
-        this.onEvent({ type: 'error', error: err.message });
+        this.emit({ type: 'error', error: err.message });
         reject(err);
       });
 
       this.ws.on('close', () => {
         logger.info('Gemini Live: WebSocket closed', this.context);
         this.isConnected = false;
-        this.onEvent({ type: 'close' });
+        this.emit({ type: 'close' });
       });
     });
   }
@@ -97,8 +103,18 @@ export class GeminiLiveVoiceBridge {
    * Принять аудио от Voximplant (μ-law 8kHz) и переслать в Gemini (PCM16 16kHz)
    */
   sendAudio(ulawChunk: Buffer): void {
+    if (this.isDisconnecting) return;
     if (!this.isConnected || !this.ws) {
-      this.audioQueue.push(ulawChunk);
+      if (this.audioQueueBytes + ulawChunk.length > 64 * 1024) {
+        this.emit({
+          type: 'error',
+          error: 'Gemini voice input queue exceeded its limit',
+        });
+        return;
+      }
+      const queued = Buffer.from(ulawChunk);
+      this.audioQueue.push(queued);
+      this.audioQueueBytes += queued.length;
       return;
     }
 
@@ -120,6 +136,8 @@ export class GeminiLiveVoiceBridge {
    * Обработать входящее сообщение от Gemini Live
    */
   private handleServerMessage(raw: string): void {
+    if (this.isDisconnecting) return;
+
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw) as Record<string, unknown>;
@@ -140,14 +158,15 @@ export class GeminiLiveVoiceBridge {
             const inlineData = part['inlineData'] as Record<string, unknown>;
             const pcm16 = base64ToPcm16(inlineData['data'] as string);
             const ulaw  = pcm16ToUlaw(pcm16);
-            this.onEvent({ type: 'audio', data: ulaw });
+            this.emit({ type: 'audio', data: ulaw });
           }
           // Текстовый транскрипт
           if (part['text']) {
-            this.onEvent({
+            this.emit({
               type: 'transcript',
               text: part['text'] as string,
               isFinal: !!(serverContent['turnComplete'] as boolean | undefined),
+              role: 'assistant',
             });
           }
         }
@@ -176,7 +195,7 @@ export class GeminiLiveVoiceBridge {
     name: string,
     args: Record<string, unknown>
   ): Promise<void> {
-    this.onEvent({ type: 'tool_call', name, args });
+    this.emit({ type: 'tool_call', name, args });
 
     let result: unknown;
     try {
@@ -195,7 +214,9 @@ export class GeminiLiveVoiceBridge {
         }],
       },
     };
-    this.ws?.send(JSON.stringify(toolResponse));
+    if (!this.isDisconnecting && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(toolResponse));
+    }
   }
 
   private async executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -228,6 +249,7 @@ export class GeminiLiveVoiceBridge {
    * Отправить текстовое сообщение (для тестирования)
    */
   sendText(text: string): void {
+    if (this.isDisconnecting) return;
     const msg = {
       clientContent: {
         turns: [{ role: 'user', parts: [{ text }] }],
@@ -240,7 +262,85 @@ export class GeminiLiveVoiceBridge {
   /**
    * Завершить разговор
    */
-  disconnect(): void {
-    this.ws?.close();
+  async disconnect(): Promise<void> {
+    this.isDisconnecting = true;
+    const socket = this.ws;
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      const socketClosed = new Promise<void>((resolve) => {
+        socket.once('close', () => resolve());
+      });
+      let closedGracefully = false;
+      try {
+        socket.close();
+        closedGracefully = await waitUntilDeadline(
+          socketClosed,
+          Date.now() + 2_000
+        );
+      } catch {
+        // Forced cleanup below handles sockets that cannot start a close frame.
+      }
+      if (!closedGracefully) {
+        try {
+          socket.terminate();
+        } catch {
+          // The socket may have closed between the deadline and forced cleanup.
+        }
+        await waitUntilDeadline(socketClosed, Date.now() + 250);
+      }
+    }
+
+    this.isConnected = false;
+    this.ws = null;
+    this.audioQueue = [];
+    this.audioQueueBytes = 0;
+    await waitUntilDeadline(this.eventChain, Date.now() + 2_000);
   }
+
+  private emit(event: VoiceRuntimeEvent): void {
+    if (this.isDisconnecting && event.type !== 'close') return;
+
+    if (event.type === 'audio') {
+      try {
+        void Promise.resolve(this.onEvent(event)).catch((error) => {
+          this.reportEventHandlerError(error, event.type);
+        });
+      } catch (error) {
+        this.reportEventHandlerError(error, event.type);
+      }
+      return;
+    }
+
+    this.eventChain = this.eventChain
+      .then(() => this.onEvent(event))
+      .catch((error) => {
+        this.reportEventHandlerError(error, event.type);
+      });
+  }
+
+  private reportEventHandlerError(
+    error: unknown,
+    eventType: VoiceRuntimeEvent['type']
+  ): void {
+    logger.error('Gemini Live: event handler error', {
+      error,
+      eventType,
+      ...this.context,
+    });
+  }
+}
+
+async function waitUntilDeadline(
+  promise: Promise<void>,
+  deadlineMs: number
+): Promise<boolean> {
+  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  let timer: NodeJS.Timeout | undefined;
+  const completed = await Promise.race([
+    promise.then(() => true),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remainingMs);
+    }).then(() => false),
+  ]);
+  if (timer) clearTimeout(timer);
+  return completed;
 }

@@ -8,8 +8,6 @@
  * того, как они будут загружены основным приложением.
  */
 
-/* eslint-disable @typescript-eslint/no-var-requires */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 import * as fs from 'fs';
