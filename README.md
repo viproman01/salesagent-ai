@@ -9,7 +9,7 @@
 | Backend     | Node.js 20 + Express + TypeScript |
 | Database    | PostgreSQL 16 + pgvector |
 | Cache/Queue | Redis + BullMQ |
-| AI Voice    | Deepgram Flux → Claude fast/medium/deep → Fish Audio |
+| AI Voice    | Deepgram Flux → Cerebras/Claude fast + Claude medium/deep → Fish Audio |
 | Voice fallback | AssemblyAI Streaming (cold STT) + Gemini Live (runtime rollback) |
 | AI Text     | Anthropic Claude |
 | Classifier  | Claude Haiku |
@@ -85,8 +85,10 @@ npm run dev
 | Переменная | Описание |
 |-----------|---------|
 | `ANTHROPIC_API_KEY` | Ключ Anthropic Claude API |
+| `CEREBRAS_API_KEYS` | Ключи Cerebras через запятую для опционального fast-слоя |
 | `GOOGLE_API_KEY` | Ключ Google AI (Gemini + Embeddings) |
 | `VOICE_RUNTIME` | `pipeline` для нового контура, `gemini` для rollback |
+| `VOICE_LLM_FAST_PROVIDER` | `cerebras` для Gemma fast-слоя или `anthropic` для rollback |
 | `VOICE_DEFAULT_ORG_ID` | Единственный разрешённый tenant для voice WebSocket |
 | `VOICE_WS_AUTH_TOKEN` | Общий секрет Voximplant ↔ backend, минимум 32 символа |
 | `DEEPGRAM_API_KEY` | Основной streaming STT (Flux multilingual) |
@@ -112,8 +114,9 @@ npm run dev
   WebSocket.
 - Deepgram Flux распознаёт речь и определяет границы реплик; при ошибке
   подключения до первого аудио доступен cold fallback на AssemblyAI.
-- Fast и medium Claude запускаются параллельно. Deep запускается только при
-  высокой сложности или явной эскалации.
+- Fast Cerebras Gemma (opt-in) и medium Claude запускаются параллельно;
+  при ошибке fast-слой откатывается на Claude Haiku. Deep Claude
+  запускается только при высокой сложности или явной эскалации.
 - Семантический ledger не разрешает поздней модели противоречить уже
   произнесённому ответу.
 - Fish Audio синтезирует только подтверждённые сегменты. Barge-in синхронно
@@ -217,11 +220,14 @@ Deepgram Flux ── cold-open fallback ──► AssemblyAI
         ▼
 Turn Manager / generation cancellation / barge-in
         │
-        ├──► Fast Claude ───────┐
-        ├──► Medium Claude ─────┼──► semantic commit ledger
-        └──► Deep Claude (если нужен) ┘
-                                      │
-                                      ▼
+        ├──► Fast: Cerebras/Claude
+        ├──► Medium: Claude
+        └──► Deep: Claude (если нужен)
+                    │
+                    ▼
+        semantic commit ledger
+                    │
+                    ▼
                           Fish Audio streaming TTS
                                       │
                                       ▼

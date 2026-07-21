@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ToolContext } from '../ai/tools';
 import { GeminiLiveVoiceBridge } from '../ai/gemini-live';
-import { config } from '../config';
+import { config, resolveVoiceFastTimeoutMs } from '../config';
 import { searchKnowledge } from '../rag/search';
 import { logger } from '../utils/logger';
 import {
@@ -12,7 +12,12 @@ import {
   type AnthropicClassifierLimits,
   type AnthropicMessagesClient,
 } from './models/anthropic-runner';
-import { VoiceResponseOrchestrator } from './orchestrator';
+import { CerebrasModelRunner } from './models/cerebras-runner';
+import { FallbackModelRunner } from './models/fallback-runner';
+import {
+  VoiceResponseOrchestrator,
+  type ModelRunner,
+} from './orchestrator';
 import { AssemblyAiStreamingSttProvider } from './providers/assemblyai-stt';
 import { ColdFallbackStreamingSttProvider } from './providers/cold-fallback-stt';
 import { createConfiguredFishTtsProvider } from './providers/configured';
@@ -43,7 +48,7 @@ export type ConfiguredVoiceRuntimeOptions = Readonly<{
 type PipelineDependencies = Readonly<{
   stt: StreamingSttProvider;
   tts: ReturnType<typeof createConfiguredFishTtsProvider>;
-  fast: AnthropicModelRunner;
+  fast: ModelRunner;
   medium: AnthropicModelRunner;
   deep: AnthropicModelRunner;
   classifier: AnthropicComplexityClassifier;
@@ -132,7 +137,7 @@ function getPipelineDependencies(): PipelineDependencies {
   const anthropic = new Anthropic({
     apiKey: config.ANTHROPIC_API_KEY,
   }) as unknown as AnthropicMessagesClient;
-  const fast = new AnthropicModelRunner({
+  const anthropicFast = new AnthropicModelRunner({
     client: anthropic,
     name: 'voice-fast',
     model: config.VOICE_LLM_FAST_MODEL,
@@ -140,6 +145,7 @@ function getPipelineDependencies(): PipelineDependencies {
     temperature: 0.1,
     limits: CANDIDATE_LIMITS,
   });
+  const fast = createFastModelRunner(anthropicFast);
   const medium = new AnthropicModelRunner({
     client: anthropic,
     name: 'voice-medium',
@@ -177,6 +183,43 @@ function getPipelineDependencies(): PipelineDependencies {
   });
 
   return cachedPipeline;
+}
+
+function createFastModelRunner(
+  anthropicFast: AnthropicModelRunner
+): ModelRunner {
+  if (config.VOICE_LLM_FAST_PROVIDER === 'anthropic') {
+    return anthropicFast;
+  }
+
+  const apiKeys = config.CEREBRAS_API_KEYS;
+  if (!apiKeys?.length) {
+    throw new Error(
+      'CEREBRAS_API_KEYS is required for the Cerebras fast voice lane'
+    );
+  }
+
+  const cerebrasFast = new CerebrasModelRunner({
+    name: 'voice-fast-cerebras',
+    model: config.VOICE_LLM_CEREBRAS_MODEL,
+    apiKeys,
+    // Keep quota reservation and full-envelope latency small on the hot path.
+    maxTokens: 160,
+    temperature: 0,
+    limits: CANDIDATE_LIMITS,
+  });
+
+  return new FallbackModelRunner({
+    primary: cerebrasFast,
+    fallback: anthropicFast,
+    onFallback: error => {
+      logger.warn('Cerebras fast lane fallback activated', {
+        primary: cerebrasFast.name,
+        fallback: anthropicFast.name,
+        errorType: error instanceof Error ? error.name : 'unknown',
+      });
+    },
+  });
 }
 
 function createConfiguredSttProvider(): StreamingSttProvider {
@@ -234,7 +277,7 @@ function createCallOrchestrator(
     deep: dependencies.deep,
     classifier: dependencies.classifier,
     deadlinesMs: {
-      fast: config.VOICE_LLM_FAST_TIMEOUT_MS,
+      fast: resolveVoiceFastTimeoutMs(config),
       medium: config.VOICE_LLM_MEDIUM_TIMEOUT_MS,
       deep: config.VOICE_LLM_DEEP_TIMEOUT_MS,
       classifier: Math.min(500, config.VOICE_LLM_FAST_TIMEOUT_MS),

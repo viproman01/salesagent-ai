@@ -6,6 +6,22 @@ dotenv.config();
 const emptyStringAsUndefined = (value: unknown): unknown =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
 
+const commaSeparatedSecrets = z.preprocess(
+  emptyStringAsUndefined,
+  z.string()
+    .refine(
+      value => value.split(',').every(secret => secret.trim().length > 0),
+      'Comma-separated secrets must not contain empty entries'
+    )
+    .transform(
+      (value): readonly string[] =>
+        Object.freeze([
+          ...new Set(value.split(',').map(secret => secret.trim())),
+        ])
+    )
+    .optional()
+);
+
 // Схема валидации всех переменных окружения
 const envSchema = z.object({
   NODE_ENV:      z.enum(['development', 'production', 'test']).default('development'),
@@ -26,6 +42,9 @@ const envSchema = z.object({
 
   // Anthropic Claude
   ANTHROPIC_API_KEY: z.string(),
+
+  // Cerebras Inference (optional fast voice lane)
+  CEREBRAS_API_KEYS:          commaSeparatedSecrets,
 
   // Google Gemini
   GOOGLE_API_KEY:       z.string(),
@@ -66,10 +85,13 @@ const envSchema = z.object({
   VOICE_WS_MAX_PAYLOAD_BYTES:  z.coerce.number().int().min(1024).max(1024 * 1024).default(128 * 1024),
   VOICE_WS_MAX_BUFFERED_BYTES: z.coerce.number().int().min(16 * 1024).max(16 * 1024 * 1024).default(128 * 1024),
   VOICE_RECORDING_MAX_BYTES:   z.coerce.number().int().min(1024 * 1024).max(1024 * 1024 * 1024).default(64 * 1024 * 1024),
+  VOICE_LLM_FAST_PROVIDER:     z.enum(['anthropic', 'cerebras']).default('anthropic'),
   VOICE_LLM_FAST_MODEL:        z.string().default('claude-haiku-4-5-20251001'),
+  VOICE_LLM_CEREBRAS_MODEL:    z.string().default('gemma-4-31b'),
   VOICE_LLM_MEDIUM_MODEL:      z.string().default('claude-sonnet-5'),
   VOICE_LLM_DEEP_MODEL:        z.string().default('claude-opus-4-8'),
   VOICE_LLM_FAST_TIMEOUT_MS:   z.coerce.number().int().positive().default(600),
+  VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS: z.coerce.number().int().positive().default(1200),
   VOICE_LLM_MEDIUM_TIMEOUT_MS: z.coerce.number().int().positive().default(1800),
   VOICE_LLM_DEEP_TIMEOUT_MS:   z.coerce.number().int().positive().default(4000),
   VOICE_LLM_TOTAL_TIMEOUT_MS:  z.coerce.number().int().positive().default(5000),
@@ -179,9 +201,41 @@ const envSchema = z.object({
       });
     }
   }
+
+  if (
+    env.VOICE_LLM_FAST_PROVIDER === 'cerebras' &&
+    !env.CEREBRAS_API_KEYS?.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['CEREBRAS_API_KEYS'],
+      message:
+        'CEREBRAS_API_KEYS is required when VOICE_RUNTIME=pipeline and VOICE_LLM_FAST_PROVIDER=cerebras',
+    });
+  }
 });
 
-type Env = z.infer<typeof envSchema>;
+export type Env = z.infer<typeof envSchema>;
+
+/** Parse an explicit environment object without touching the cached process config. */
+export function parseConfigEnvironment(
+  environment: NodeJS.ProcessEnv
+): Env {
+  return envSchema.parse(environment);
+}
+
+export function resolveVoiceFastTimeoutMs(
+  environment: Pick<
+    Env,
+    | 'VOICE_LLM_FAST_PROVIDER'
+    | 'VOICE_LLM_FAST_TIMEOUT_MS'
+    | 'VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS'
+  >
+): number {
+  return environment.VOICE_LLM_FAST_PROVIDER === 'cerebras'
+    ? environment.VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS
+    : environment.VOICE_LLM_FAST_TIMEOUT_MS;
+}
 
 let _config: Env | null = null;
 
