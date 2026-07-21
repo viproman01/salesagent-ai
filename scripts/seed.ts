@@ -7,7 +7,7 @@ dotenv.config();
 
 import { Pool } from 'pg';
 import bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
+import { validate as isUuid, v4 as uuidv4 } from 'uuid';
 
 const pool = new Pool({ connectionString: process.env['DATABASE_URL'] });
 
@@ -75,7 +75,14 @@ async function seed() {
     console.log('🌱 Начало сидирования базы данных...');
 
     // ---- Организация ----
-    const orgId = uuidv4();
+    const configuredVoiceOrgId = process.env['VOICE_DEFAULT_ORG_ID']?.trim();
+    if (configuredVoiceOrgId && !isUuid(configuredVoiceOrgId)) {
+      throw new Error('VOICE_DEFAULT_ORG_ID must be a valid UUID');
+    }
+    // В локальном voice-контуре seed должен создать того же tenant, который
+    // разрешён WebSocket-конфигурацией. Без явного значения сохраняем прежнее
+    // поведение со случайным UUID.
+    const orgId = configuredVoiceOrgId || uuidv4();
     await client.query(
       `INSERT INTO organizations (id, name, slug, plan, timezone, country, currency)
        VALUES ($1, $2, $3, 'starter', 'Asia/Almaty', 'KZ', 'KZT')
@@ -88,6 +95,11 @@ async function seed() {
       `SELECT id FROM organizations WHERE slug = 'demo-flower-shop'`
     );
     const actualOrgId = orgResult.rows[0]!.id;
+    if (configuredVoiceOrgId && actualOrgId !== configuredVoiceOrgId) {
+      throw new Error(
+        'Existing demo organization does not match VOICE_DEFAULT_ORG_ID'
+      );
+    }
 
     console.log(`✅ Организация: ${actualOrgId}`);
 

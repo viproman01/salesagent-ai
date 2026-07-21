@@ -68,6 +68,8 @@ export const followUpWorker: Worker<FollowUpJob> | { run: () => Promise<void>; c
       {
         connection: getRedisConnection(),
         concurrency: 5,
+        // Startup is coordinated explicitly from src/index.ts.
+        autorun: false,
       }
     );
 

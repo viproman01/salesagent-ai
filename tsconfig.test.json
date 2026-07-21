@@ -4,6 +4,10 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/fish-tts-smoke.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/fish-tts-smoke.ts"
+  ],
   "exclude": ["node_modules", "dist", "admin"]
 }

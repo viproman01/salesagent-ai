@@ -29,6 +29,7 @@ describe('voice LLM environment configuration', () => {
     const parsed = parseConfigEnvironment(BASE_ENV);
 
     assert.equal(parsed.VOICE_LLM_FAST_PROVIDER, 'anthropic');
+    assert.equal(parsed.GEMINI_EMBED_MODEL, 'gemini-embedding-2');
     assert.equal(parsed.VOICE_LLM_CEREBRAS_MODEL, 'gemma-4-31b');
     assert.equal(parsed.VOICE_LLM_FAST_TIMEOUT_MS, 600);
     assert.equal(parsed.VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS, 3000);
@@ -79,6 +80,21 @@ describe('voice LLM environment configuration', () => {
         error instanceof ZodError &&
         error.issues.some(
           issue => issue.path.join('.') === 'CEREBRAS_API_KEYS'
+        )
+    );
+  });
+
+  it('rejects the retired embedding model instead of mixing vector spaces', () => {
+    assert.throws(
+      () =>
+        parseConfigEnvironment({
+          ...BASE_ENV,
+          GEMINI_EMBED_MODEL: 'text-embedding-004',
+        }),
+      (error: unknown) =>
+        error instanceof ZodError &&
+        error.issues.some(
+          issue => issue.path.join('.') === 'GEMINI_EMBED_MODEL'
         )
     );
   });

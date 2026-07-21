@@ -23,7 +23,11 @@ export const metricsWorker: Worker | { run: () => Promise<void>; close: () => Pr
         const { orgId, date } = job.data as { orgId: string; date: string };
         await aggregateDailyMetrics(orgId, date);
       },
-      { connection: getRedisConnection() }
+      {
+        connection: getRedisConnection(),
+        // Startup is coordinated explicitly from src/index.ts.
+        autorun: false,
+      }
     );
 
 /**

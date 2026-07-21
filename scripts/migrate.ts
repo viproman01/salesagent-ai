@@ -13,7 +13,15 @@ const pool = new Pool({ connectionString: process.env['DATABASE_URL'] });
 
 async function migrate() {
   const migrationsDir = path.join(process.cwd(), 'migrations');
-  const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+  // Only numbered, active migrations are executable. Files prefixed with
+  // `_old_` are retained as historical references and must never be applied.
+  const files = fs.readdirSync(migrationsDir)
+    .filter(file => /^\d{3}_[A-Za-z0-9_-]+\.sql$/.test(file))
+    .sort();
+
+  if (files.length === 0) {
+    throw new Error('No active migrations matching NNN_*.sql were found');
+  }
 
   const client = await pool.connect();
   try {

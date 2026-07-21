@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
-dotenv.config();
+let defaultEnvironmentLoaded = false;
+
+function loadDefaultEnvironment(): void {
+  if (defaultEnvironmentLoaded) return;
+  defaultEnvironmentLoaded = true;
+  dotenv.config();
+}
 
 const emptyStringAsUndefined = (value: unknown): unknown =>
   typeof value === 'string' && value.trim() === '' ? undefined : value;
@@ -49,7 +55,7 @@ const envSchema = z.object({
   // Google Gemini
   GOOGLE_API_KEY:       z.string(),
   GEMINI_LIVE_MODEL:    z.string().default('gemini-3.1-flash-live-preview'),
-  GEMINI_EMBED_MODEL:   z.string().default('text-embedding-004'),
+  GEMINI_EMBED_MODEL:   z.literal('gemini-embedding-2').default('gemini-embedding-2'),
 
   // Fish Audio (опциональный новый TTS runtime)
   FISH_API_KEY:                z.string().optional(),
@@ -241,6 +247,8 @@ let _config: Env | null = null;
 
 export function getConfig(): Env {
   if (_config) return _config;
+
+  loadDefaultEnvironment();
 
   const result = envSchema.safeParse(process.env);
   if (!result.success) {

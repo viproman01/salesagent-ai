@@ -1,6 +1,7 @@
 import pool from '../db';
+import { config } from '../config';
 import { logger } from '../utils/logger';
-import { getCachedEmbedding } from '../utils/cacheEmbeddings';
+import { getCachedQueryEmbedding } from '../utils/cacheEmbeddings';
 
 export interface KnowledgeChunk {
   id: string;
@@ -23,16 +24,17 @@ export async function searchKnowledge(
   topK = 3,
   threshold = 0.65
 ): Promise<KnowledgeChunk[]> {
-  const embedding = await getCachedEmbedding(query);
+  const embedding = await getCachedQueryEmbedding(query);
   const embeddingStr = `[${embedding.join(',')}]`;
 
   const result = await pool.query<KnowledgeChunk>(
-    `SELECT * FROM match_knowledge($1::vector, $2, $3, $4)`,
-    [embeddingStr, topK, orgId, threshold]
+    `SELECT * FROM match_knowledge($1::vector, $2, $3, $4, $5)`,
+    [embeddingStr, topK, orgId, config.GEMINI_EMBED_MODEL, threshold]
   );
 
   logger.debug('Knowledge search', {
-    orgId, query, results: result.rows.length
+    orgId,
+    results: result.rows.length,
   });
 
   return result.rows;
@@ -59,12 +61,17 @@ export async function saveKnowledgeChunks(
       const embeddingStr = `[${chunk.embedding.join(',')}]`;
       await client.query(
         `INSERT INTO knowledge_chunks
-           (org_id, content, embedding, category, source_file, chunk_index, token_count)
-         VALUES ($1, $2, $3::vector, $4, $5, $6, $7)`,
+           (org_id, content, embedding, embedding_model, category, source_file, chunk_index, token_count)
+         VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8)`,
         [
-          orgId, chunk.content, embeddingStr,
-          chunk.category ?? null, chunk.source_file ?? null,
-          chunk.chunk_index, chunk.token_count ?? null,
+          orgId,
+          chunk.content,
+          embeddingStr,
+          config.GEMINI_EMBED_MODEL,
+          chunk.category ?? null,
+          chunk.source_file ?? null,
+          chunk.chunk_index,
+          chunk.token_count ?? null,
         ]
       );
     }

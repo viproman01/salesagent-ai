@@ -36,9 +36,27 @@ cp .env.example .env
 
 ### 2. Запуск с Docker Compose
 
+Требуется Docker Compose v2.17 или новее (команда `docker compose`).
+
 ```bash
-docker-compose up -d
+docker compose up --build -d
+docker compose ps
 ```
+
+Перед запуском вне локальной машины обязательно замените
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `S3_ACCESS_KEY` и `S3_SECRET_KEY` в
+`.env`. Порты PostgreSQL, Redis и MinIO в Compose публикуются
+только на `127.0.0.1`.
+
+Compose ожидает готовности PostgreSQL с доступным pgvector и MinIO, затем:
+
+- применяет только активные миграции `NNN_*.sql` (архивные `_old_*.sql`
+  игнорируются);
+- создаёт buckets `recordings` и `knowledge`, если их ещё нет;
+- запускает backend только после успешных миграций и подготовки buckets.
+
+Миграции повторно проверяются при каждом `docker compose up`, поэтому новые
+версии схемы применяются и к уже существующему volume `pgdata`.
 
 Сервисы:
 - **Backend API**: http://localhost:3000
@@ -46,18 +64,28 @@ docker-compose up -d
 - **MinIO Console**: http://localhost:9001 (minioadmin/minioadmin)
 - **PostgreSQL**: localhost:5432
 
+Проверка готовности инфраструктуры и журналы одноразовых init-сервисов:
+
+```bash
+docker compose ps
+docker compose logs migrate minio-init
+```
+
 ### 3. Применение миграций и сидирование
 
 ```bash
 # Установка зависимостей
 npm install
 
-# Миграции (выполняются автоматически через docker-entrypoint)
+# Compose применяет их автоматически; для запуска с host:
 npm run migrate:dev
 
 # Тестовые данные (org + agent "Айгуль" + база знаний + лиды)
 npm run seed
 ```
+
+Если задан `VOICE_DEFAULT_ORG_ID`, seed использует его для demo-организации,
+чтобы локальный voice WebSocket и активный агент относились к одному tenant.
 
 **Тестовые данные:**
 - Email: `demo@flowers.kz`

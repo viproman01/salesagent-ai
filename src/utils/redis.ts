@@ -21,6 +21,7 @@ export function getRedisConnection(): any {
 
   const { Redis } = require('ioredis');
   _connection = new Redis(config.REDIS_URL, {
+    password: config.REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });

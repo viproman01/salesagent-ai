@@ -106,6 +106,41 @@ npm run setup:voximplant
 и повторно привязывает к нему актуальный сценарий. Покупка и привязка номера
 остаются явным действием владельца аккаунта.
 
+## 5.1. Проверить production readiness
+
+После развёртывания выполните безопасную read-only проверку зависимостей:
+
+```bash
+npm run build
+npm run --silent readiness:production -- \
+  --env-file .env.production \
+  --public-url https://voice.example.com \
+  --strict
+```
+
+Команда проверяет production-конфигурацию, PostgreSQL 16 и схему с
+`vector(768)`, Redis, оба S3 bucket, активного voice-агента, свежий публичный
+`/health` и обязательный отказ WebSocket при неверном токене. Вывод содержит
+только идентификатор проверки, статус, безопасный код и длительность — без URL,
+UUID, ответов провайдеров и секретов. `--format json` включает машинный формат,
+а `--billing` отдельно добавляет read-only проверки положительного баланса Fish
+Audio и Voximplant; без этого флага обращения к их billing API не выполняются.
+Entrypoint компилируется в `dist/readiness/cli.js` и запускается обычным Node.js,
+поэтому он доступен в production-образе без `tsx` и каталога `scripts`.
+Разделитель `--` в package script не даёт Node.js перехватить CLI-флаг
+`--env-file`; прямой эквивалент — `node -- dist/readiness/cli.js ...`.
+Для Docker Compose запускайте проверку через entrypoint нового контейнера
+(не через `docker compose exec`, где вычисленный `DATABASE_URL` не наследуется):
+
+```bash
+docker compose run --rm app npm run readiness:production -- \
+  --format json --strict --billing
+```
+
+Коды завершения: `0` — готово, `1` — есть блокер (или warning с `--strict`),
+`2` — неверные аргументы/файл конфигурации, `3` — внутренняя ошибка, `130` —
+проверка прервана пользователем.
+
 ## 6. Live-приёмка
 
 Проведите минимум следующие звонки и сохраните логи:
