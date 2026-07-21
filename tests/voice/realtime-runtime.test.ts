@@ -90,6 +90,40 @@ class FakeSttProvider implements StreamingSttProvider {
   }
 }
 
+function fakeSttTurnEvent(
+  kind: 'update' | 'start_of_turn',
+  transcript: string,
+  serverSequence: number
+): SttSessionEvent {
+  return {
+    type: 'turn',
+    transcriptionId: 'transcription-1',
+    attemptId: 'attempt-1',
+    provider: 'fake-stt',
+    stream: {
+      callId: 'call-greeting-update',
+      conversationId: 'conversation-greeting-update',
+    },
+    timestampMs: Date.now(),
+    signal: new AbortController().signal,
+    turn: {
+      kind,
+      turnIndex: 0,
+      transcript,
+      words: [],
+      audioWindowStartMs: 0,
+      audioWindowEndMs: 240,
+      endOfTurnConfidence: 0.1,
+      isFinal: false,
+      isSpeculative: false,
+      requestId: 'request-1',
+      serverSequence,
+      languages: [],
+      languagesHinted: ['ru'],
+    },
+  };
+}
+
 class FakeTtsSession implements StreamingTtsSession {
   readonly provider = 'fake-tts';
   readonly synthesisId: string;
@@ -478,6 +512,46 @@ test('uses Fish for greeting generation 1 and reserves generation 2 for the firs
     collector.events.some(event => event.type === 'fallback_speech'),
     false
   );
+  await runtime.disconnect();
+});
+
+test('ignores empty Flux updates but still treats StartOfTurn as barge-in', async () => {
+  const stt = new FakeSttProvider();
+  const collector = eventCollector();
+  const runtime = new RealtimeVoiceRuntime({
+    callId: 'call-greeting-update',
+    conversationId: 'conversation-greeting-update',
+    systemPrompt: 'Be useful.',
+    stt,
+    tts: new FakeTtsProvider(),
+    orchestrator: createOrchestrator(
+      new CandidateRunner('fast', candidate(['Ответ пользователю.']))
+    ),
+    greetingText: 'Здравствуйте!',
+    onEvent: collector.onEvent,
+    wait: waitUntilAborted,
+    playbackDrainPaddingMs: 0,
+  });
+
+  await runtime.connect();
+  await collector.waitFor(
+    event =>
+      event.type === 'playback_flush' && event.generation === 1
+  );
+
+  await stt.onEvent?.(fakeSttTurnEvent('update', '', 1));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(
+    collector.events.some(event => event.type === 'playback_clear'),
+    false
+  );
+
+  await stt.onEvent?.(fakeSttTurnEvent('start_of_turn', '', 2));
+  await collector.waitFor(
+    event =>
+      event.type === 'playback_clear' && event.generation === 2
+  );
+
   await runtime.disconnect();
 });
 

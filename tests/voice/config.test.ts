@@ -31,7 +31,7 @@ describe('voice LLM environment configuration', () => {
     assert.equal(parsed.VOICE_LLM_FAST_PROVIDER, 'anthropic');
     assert.equal(parsed.VOICE_LLM_CEREBRAS_MODEL, 'gemma-4-31b');
     assert.equal(parsed.VOICE_LLM_FAST_TIMEOUT_MS, 600);
-    assert.equal(parsed.VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS, 1200);
+    assert.equal(parsed.VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS, 3000);
     assert.equal(parsed.CEREBRAS_API_KEYS, undefined);
     assert.equal(resolveVoiceFastTimeoutMs(parsed), 600);
   });
@@ -48,7 +48,7 @@ describe('voice LLM environment configuration', () => {
       'second-test-key',
     ]);
     assert.equal(Object.isFrozen(parsed.CEREBRAS_API_KEYS), true);
-    assert.equal(resolveVoiceFastTimeoutMs(parsed), 1200);
+    assert.equal(resolveVoiceFastTimeoutMs(parsed), 3000);
   });
 
   it('requires Cerebras keys only when the pipeline selects Cerebras', () => {

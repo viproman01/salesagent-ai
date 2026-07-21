@@ -719,6 +719,33 @@ test('serializes turn delivery and waits for final callbacks before completing',
   ]);
 });
 
+test('accepts an empty live multilingual StartOfTurn placeholder', async () => {
+  const harness = createHarness();
+  const controller = new AbortController();
+  const session = await openSession(harness, controller);
+
+  harness.socket.serverJson(
+    turnInfo(1, 'StartOfTurn', {
+      transcript: '',
+      words: [],
+      languages: [],
+    })
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const turnEvent = harness.events.find((event) => event.type === 'turn');
+  assert.equal(turnEvent?.type, 'turn');
+  if (turnEvent?.type === 'turn') {
+    assert.equal(turnEvent.turn.kind, 'start_of_turn');
+    assert.equal(turnEvent.turn.transcript, '');
+    assert.deepEqual(turnEvent.turn.words, []);
+  }
+  assert.equal(session.state, 'open');
+
+  controller.abort('done');
+  await session.closed;
+});
+
 test('cancellation drops turn events queued behind an active callback', async () => {
   const socket = new FakeWebSocket();
   const controller = new AbortController();
@@ -1155,6 +1182,37 @@ test('accepts valid Flux words without optional timestamps', async () => {
       confidence: 0.97,
     },
   ]);
+  controller.abort('done');
+  await session.closed;
+});
+
+test('clamps negligible negative Flux timestamp drift to zero', async () => {
+  const harness = createHarness();
+  const controller = new AbortController();
+  const session = await openSession(harness, controller);
+  harness.socket.serverJson(
+    turnInfo(1, 'Update', {
+      transcript: 'Здравствуйте',
+      words: [
+        {
+          word: 'Здравствуйте',
+          confidence: 0.97,
+          start: -2.1457672083613488e-8,
+          end: 0.7,
+        },
+      ],
+    })
+  );
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const turnEvent = harness.events.find((event) => event.type === 'turn');
+  assert.equal(turnEvent?.type, 'turn');
+  if (turnEvent?.type === 'turn') {
+    assert.equal(turnEvent.turn.words[0]?.startMs, 0);
+    assert.equal(turnEvent.turn.words[0]?.endMs, 700);
+  }
+  assert.equal(session.state, 'open');
+
   controller.abort('done');
   await session.closed;
 });

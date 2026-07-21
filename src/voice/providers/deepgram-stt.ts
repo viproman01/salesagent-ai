@@ -21,6 +21,7 @@ import {
 const DEFAULT_URL = 'wss://api.deepgram.com/v2/listen';
 const DEFAULT_MODEL = 'flux-general-multi';
 const WIRE_FRAME_BYTES = 640;
+const TIMESTAMP_EPSILON_SECONDS = 1e-6;
 const SUPPORTED_FLUX_LANGUAGE_BASES = new Set([
   'de',
   'en',
@@ -536,11 +537,11 @@ class DeepgramFluxSttSession implements StreamingSttSession {
     let event: DeepgramServerEvent | undefined;
     try {
       event = parseServerEvent(raw);
-    } catch {
+    } catch (error) {
       this.fail(
         new SttProviderError(
           'protocol_error',
-          'Deepgram returned an invalid JSON message',
+          `Deepgram returned an invalid protocol message (${protocolFailureKind(error)})`,
           false
         )
       );
@@ -1239,12 +1240,9 @@ function parseServerEvent(raw: RawData): DeepgramServerEvent | undefined {
     throw new Error('invalid Deepgram audio window');
   }
   const transcript = stringValue(value['transcript']);
-  if (
-    (event === 'StartOfTurn' || event === 'EagerEndOfTurn') &&
-    !transcript.trim()
-  ) {
-    throw new Error('invalid empty Deepgram turn transcript');
-  }
+  // The live multilingual endpoint can emit an empty StartOfTurn placeholder
+  // before its first transcript-bearing Update. It is still a valid speech
+  // boundary for barge-in; later events carry the text.
 
   return {
     type: 'TurnInfo',
@@ -1327,6 +1325,25 @@ function rawDataToUtf8(raw: RawData): string {
   if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
   if (Array.isArray(raw)) return Buffer.concat(raw).toString('utf8');
   return Buffer.from(raw).toString('utf8');
+}
+
+function protocolFailureKind(error: unknown): string {
+  if (error instanceof SyntaxError) return 'malformed_json';
+  if (!(error instanceof Error)) return 'invalid_shape';
+  const knownKinds: Readonly<Record<string, string>> = Object.freeze({
+    'invalid Deepgram message': 'envelope',
+    'invalid Deepgram turn event': 'turn_event',
+    'invalid Deepgram audio window': 'audio_window',
+    'invalid Deepgram word': 'word',
+    'invalid Deepgram word window': 'word_window',
+    'expected non-empty string': 'required_string',
+    'expected string': 'string',
+    'expected non-negative integer': 'integer',
+    'expected non-negative finite number': 'finite_number',
+    'expected probability': 'probability',
+    'expected string array': 'string_array',
+  });
+  return knownKinds[error.message] ?? 'invalid_shape';
 }
 
 function providerErrorMessage(code: string): string {
@@ -1459,11 +1476,11 @@ function nonNegativeFinite(value: unknown): number {
   if (
     typeof value !== 'number' ||
     !Number.isFinite(value) ||
-    value < 0
+    value < -TIMESTAMP_EPSILON_SECONDS
   ) {
     throw new Error('expected non-negative finite number');
   }
-  return value;
+  return Math.max(0, value);
 }
 
 function optionalNonNegativeFinite(value: unknown): number | undefined {

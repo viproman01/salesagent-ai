@@ -91,7 +91,7 @@ const envSchema = z.object({
   VOICE_LLM_MEDIUM_MODEL:      z.string().default('claude-sonnet-5'),
   VOICE_LLM_DEEP_MODEL:        z.string().default('claude-opus-4-8'),
   VOICE_LLM_FAST_TIMEOUT_MS:   z.coerce.number().int().positive().default(600),
-  VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS: z.coerce.number().int().positive().default(1200),
+  VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
   VOICE_LLM_MEDIUM_TIMEOUT_MS: z.coerce.number().int().positive().default(1800),
   VOICE_LLM_DEEP_TIMEOUT_MS:   z.coerce.number().int().positive().default(4000),
   VOICE_LLM_TOTAL_TIMEOUT_MS:  z.coerce.number().int().positive().default(5000),

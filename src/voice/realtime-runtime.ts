@@ -335,6 +335,15 @@ export class RealtimeVoiceRuntime implements VoiceRuntime {
 
     let turn = this.sttTurns.get(snapshot.turnIndex);
     if (!turn) {
+      const startsSpeech =
+        snapshot.kind === 'start_of_turn' ||
+        snapshot.kind === 'turn_resumed' ||
+        snapshot.transcript.trim().length > 0;
+      // Flux emits empty Update placeholders both before speech and after a
+      // completed turn. They must not create a new generation or cancel the
+      // response currently being prepared.
+      if (!startsSpeech) return;
+
       const lease = this.turnManager.speechStarted();
       turn = lease.turn;
       this.sttTurns.set(snapshot.turnIndex, turn);
