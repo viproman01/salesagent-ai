@@ -46,7 +46,10 @@ export async function scheduleClassification(
   try {
     await classifyConversation(conversationId, orgId, leadId);
   } catch (err) {
-    logger.error('Classifier error', { error: err, conversationId });
+    logger.error('Classifier error', {
+      code: safeClassifierErrorCode(err),
+      conversationId,
+    });
   }
 }
 
@@ -95,7 +98,10 @@ async function classifyConversation(
     if (!jsonMatch) throw new Error('No JSON in classifier response');
     classification = JSON.parse(jsonMatch[0]) as Classification;
   } catch (err) {
-    logger.error('Classifier JSON parse error', { error: err, rawText });
+    logger.error('Classifier JSON parse error', {
+      code: safeClassifierErrorCode(err),
+      conversationId,
+    });
     return;
   }
 
@@ -124,4 +130,10 @@ async function classifyConversation(
       confidence: classification.confidence,
     });
   }
+}
+
+function safeClassifierErrorCode(error: unknown): string {
+  return error instanceof Error && /^[A-Za-z0-9_ -]{1,80}$/u.test(error.name)
+    ? error.name
+    : 'ClassifierError';
 }

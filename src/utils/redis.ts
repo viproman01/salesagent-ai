@@ -4,7 +4,6 @@
  * Иначе — подключается к реальному Redis по URL.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 import { config } from '../config';
@@ -22,6 +21,7 @@ export function getRedisConnection(): any {
 
   const { Redis } = require('ioredis');
   _connection = new Redis(config.REDIS_URL, {
+    password: config.REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });

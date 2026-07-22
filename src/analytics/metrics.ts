@@ -7,7 +7,6 @@ import pool from '../db';
 const IS_MEMORY = config.REDIS_URL === 'memory';
 
 // Очередь для агрегации метрик
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const metricsQueue: Queue | null = IS_MEMORY ? null : new Queue('metrics', {
   connection: getRedisConnection(),
   defaultJobOptions: { removeOnComplete: 10, removeOnFail: 5 },
@@ -24,7 +23,11 @@ export const metricsWorker: Worker | { run: () => Promise<void>; close: () => Pr
         const { orgId, date } = job.data as { orgId: string; date: string };
         await aggregateDailyMetrics(orgId, date);
       },
-      { connection: getRedisConnection() }
+      {
+        connection: getRedisConnection(),
+        // Startup is coordinated explicitly from src/index.ts.
+        autorun: false,
+      }
     );
 
 /**

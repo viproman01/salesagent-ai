@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Volume2 } from 'lucide-react';
+import { Play, Pause } from 'lucide-react';
 
 interface Props {
   url:      string;
@@ -13,16 +13,20 @@ export default function AudioPlayer({ url, duration }: Props) {
   const [playing, setPlaying]   = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [ready, setReady]       = useState(false);
+  const [rate,  setRate]        = useState(1);
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const root = getComputedStyle(document.documentElement);
+    const fg2 = root.getPropertyValue('--fg-2').trim() || '#6b7280';
+    const accent = root.getPropertyValue('--accent').trim() || '#00b14f';
 
     const ws = WaveSurfer.create({
       container:   containerRef.current,
-      waveColor:   '#94a3b8',
-      progressColor: '#4f6ef7',
-      cursorColor:   '#4f6ef7',
-      height:      64,
+      waveColor:   fg2,
+      progressColor: accent,
+      cursorColor:   accent,
+      height:      56,
       barWidth:    2,
       barGap:      1,
       barRadius:   2,
@@ -37,6 +41,10 @@ export default function AudioPlayer({ url, duration }: Props) {
     return () => { ws.destroy(); };
   }, [url]);
 
+  useEffect(() => {
+    wsRef.current?.setPlaybackRate(rate);
+  }, [rate]);
+
   const toggle = () => {
     if (!wsRef.current || !ready) return;
     wsRef.current.playPause();
@@ -49,25 +57,36 @@ export default function AudioPlayer({ url, duration }: Props) {
   };
 
   return (
-    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+    <div className="bg-bg-1 rounded-2 p-3 border border-line">
       <div className="flex items-center gap-3">
         <button
           onClick={toggle}
           disabled={!ready}
-          className="w-10 h-10 rounded-full bg-brand-500 hover:bg-brand-600 flex items-center justify-center text-white disabled:opacity-40 transition-colors shrink-0"
+          className="w-9 h-9 rounded-full bg-accent hover:brightness-110 active:brightness-95 flex items-center justify-center text-accent-fg disabled:opacity-40 transition-all shrink-0"
         >
-          {playing ? <Pause size={18} /> : <Play size={18} />}
+          {playing ? <Pause size={15} /> : <Play size={15} />}
         </button>
 
         <div className="flex-1 min-w-0">
           <div ref={containerRef} />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
+          <div className="flex justify-between num text-[10px] text-fg-2 mt-1">
             <span>{fmt(currentTime)}</span>
             <span>{fmt(duration)}</span>
           </div>
         </div>
 
-        <Volume2 size={16} className="text-gray-400 shrink-0" />
+        <select
+          value={rate}
+          onChange={e => setRate(Number(e.target.value))}
+          className="num bg-bg-2 border border-line rounded-1 h-7 text-[11px] px-1 text-fg-0 outline-none"
+          aria-label="Скорость"
+        >
+          <option value={0.75}>0.75×</option>
+          <option value={1}>1×</option>
+          <option value={1.25}>1.25×</option>
+          <option value={1.5}>1.5×</option>
+          <option value={2}>2×</option>
+        </select>
       </div>
     </div>
   );

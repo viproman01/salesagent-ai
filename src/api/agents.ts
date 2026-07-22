@@ -8,11 +8,13 @@ export const agentsRouter = Router();
 const agentSchema = z.object({
   name:          z.string().min(1).max(100),
   system_prompt: z.string().min(10),
-  channels:      z.array(z.enum(['whatsapp', 'telegram', 'voice'])).min(1),
+  channels:      z.array(z.enum(['whatsapp', 'telegram', 'voice', 'webchat'])).min(1),
   voice_config:  z.object({
     voice:    z.string().default('Aoede'),
     language: z.string().default('ru-RU'),
     speed:    z.number().min(0.5).max(2.0).default(1.0),
+    fish_reference_id: z.string().uuid().optional(),
+    greeting: z.string().min(1).max(300).optional(),
   }).optional(),
   temperature:   z.number().min(0).max(1).default(0.7),
   max_tokens:    z.number().min(64).max(4096).default(1024),

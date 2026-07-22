@@ -84,7 +84,10 @@ export class AmoCRMClient {
       const leads = contacts[0]?._embedded?.leads ?? [];
       return leads[0] ?? null;
     } catch (err) {
-      logger.error('AmoCRM: findLead failed', { error: err, phone });
+      logger.error('AmoCRM: findLead failed', {
+        orgId: this.orgId,
+        code: safeAmoCRMErrorCode(err),
+      });
       return null;
     }
   }
@@ -159,7 +162,8 @@ export class AmoCRMClient {
         grant_type:    'refresh_token',
         refresh_token: this.refreshToken,
         redirect_uri:  `https://app.salesagent.ai/api/crm/amocrm/callback`,
-      }
+      },
+      { timeout: 10_000 }
     );
 
     this.accessToken    = resp.data.access_token;
@@ -182,6 +186,12 @@ export class AmoCRMClient {
       await this.refreshAccessToken();
     }
   }
+}
+
+function safeAmoCRMErrorCode(error: unknown): string {
+  return error instanceof Error && /^[A-Za-z0-9_ -]{1,80}$/u.test(error.name)
+    ? error.name
+    : 'AmoCRMError';
 }
 
 /**

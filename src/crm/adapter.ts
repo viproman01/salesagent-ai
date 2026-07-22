@@ -45,7 +45,12 @@ export async function updateLeadStage(
     await crm.updateLeadStage(parseInt(lead.external_crm_id), parseInt(statusId), notes);
   } catch (err) {
     // Ошибки CRM-синхронизации не должны ломать основной флоу
-    logger.error('CRM sync failed (non-critical)', { error: err, orgId, leadId, stage });
+    logger.error('CRM sync failed (non-critical)', {
+      code: safeErrorCode(err),
+      orgId,
+      leadId,
+      stage,
+    });
   }
 }
 
@@ -60,51 +65,73 @@ export async function getOrCreateLead(
   // Нормализуем телефон
   const normalizedPhone = phone.replace(/\D/g, '');
 
-  // Ищем существующий лид
-  const existing = await pool.query<{ id: string }>(
-    'SELECT id FROM leads WHERE org_id = $1 AND phone = $2',
-    [orgId, normalizedPhone]
-  );
-  if (existing.rows.length > 0) {
-    return { id: existing.rows[0]!.id, isNew: false };
-  }
-
-  // Создаём новый лид
+  // One atomic insert boundary prevents simultaneous normal/control WhatsApp
+  // turns from creating duplicate leads or surfacing a unique-key failure.
   const result = await pool.query<{ id: string }>(
     `INSERT INTO leads (org_id, phone, source, stage)
      VALUES ($1, $2, $3, 'new')
+     ON CONFLICT (org_id, phone) DO NOTHING
      RETURNING id`,
     [orgId, normalizedPhone, source]
   );
-  const newLeadId = result.rows[0]!.id;
-
-  // Создаём в AmoCRM (если подключено)
-  try {
-    const crm = await getAmoCRMClient(orgId);
-    if (crm) {
-      const connResult = await pool.query<{ pipeline_id: string; stage_mapping: Record<string, string> }>(
-        'SELECT pipeline_id, stage_mapping FROM crm_connections WHERE org_id = $1 AND crm_type = $2',
-        [orgId, 'amocrm']
-      );
-      if (connResult.rows.length > 0) {
-        const conn = connResult.rows[0]!;
-        const statusId = conn.stage_mapping['new'];
-        if (conn.pipeline_id && statusId) {
-          const crmLeadId = await crm.createLead(
-            phone, phone,
-            parseInt(conn.pipeline_id),
-            parseInt(statusId)
-          );
-          await pool.query(
-            'UPDATE leads SET external_crm_id = $1, crm_type = $2 WHERE id = $3',
-            [String(crmLeadId), 'amocrm', newLeadId]
-          );
-        }
-      }
+  const newLeadId = result.rows[0]?.id;
+  if (!newLeadId) {
+    const existing = await pool.query<{ id: string }>(
+      'SELECT id FROM leads WHERE org_id = $1 AND phone = $2',
+      [orgId, normalizedPhone]
+    );
+    if (!existing.rows[0]) {
+      throw new Error('Lead upsert did not return a row');
     }
-  } catch (err) {
-    logger.error('CRM lead creation failed (non-critical)', { error: err, orgId, phone });
+    return { id: existing.rows[0].id, isNew: false };
   }
 
+  // External CRM is deliberately detached from the inbound consent path.
+  // A slow OAuth refresh must never delay a first-contact STOP command.
+  void syncNewLeadToAmoCRM(orgId, newLeadId, phone).catch(err => {
+    logger.error('CRM lead creation failed (non-critical)', {
+      orgId,
+      leadId: newLeadId,
+      code: safeErrorCode(err),
+    });
+  });
+
   return { id: newLeadId, isNew: true };
+}
+
+async function syncNewLeadToAmoCRM(
+  orgId: string,
+  leadId: string,
+  phone: string
+): Promise<void> {
+  const crm = await getAmoCRMClient(orgId);
+  if (!crm) return;
+  const connResult = await pool.query<{
+    pipeline_id: string;
+    stage_mapping: Record<string, string>;
+  }>(
+    'SELECT pipeline_id, stage_mapping FROM crm_connections WHERE org_id = $1 AND crm_type = $2',
+    [orgId, 'amocrm']
+  );
+  const conn = connResult.rows[0];
+  const statusId = conn?.stage_mapping['new'];
+  if (!conn?.pipeline_id || !statusId) return;
+  const crmLeadId = await crm.createLead(
+    phone,
+    phone,
+    Number.parseInt(conn.pipeline_id, 10),
+    Number.parseInt(statusId, 10)
+  );
+  await pool.query(
+    `UPDATE leads
+     SET external_crm_id = $1, crm_type = 'amocrm', updated_at = NOW()
+     WHERE id = $2 AND org_id = $3 AND external_crm_id IS NULL`,
+    [String(crmLeadId), leadId, orgId]
+  );
+}
+
+function safeErrorCode(error: unknown): string {
+  return error instanceof Error && /^[A-Za-z0-9_ -]{1,80}$/u.test(error.name)
+    ? error.name
+    : 'CRMError';
 }

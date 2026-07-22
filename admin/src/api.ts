@@ -1,9 +1,20 @@
 import axios from 'axios';
 
-// В dev-режиме ходим напрямую на бэкенд (vite proxy капризничает в разных браузерах)
-const API_BASE = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV
-  ? 'http://127.0.0.1:3002/api/v1'
-  : '/api/v1';
+type AdminImportMeta = ImportMeta & {
+  env?: {
+    DEV?: boolean;
+    VITE_API_BASE_URL?: string;
+  };
+};
+
+const adminEnv = (import.meta as AdminImportMeta).env;
+const configuredApiBase = adminEnv?.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
+
+// VITE_API_BASE_URL accepts a complete API prefix, for example
+// http://127.0.0.1:3000/api/v1. Port 3000 matches the documented backend default.
+const API_BASE = configuredApiBase || (adminEnv?.DEV
+  ? 'http://127.0.0.1:3000/api/v1'
+  : '/api/v1');
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -52,10 +63,14 @@ export interface Conversation {
   summary:       string | null;
   started_at:    string;
   last_message_at: string | null;
-  phone:         string;
+  phone:         string | null;
   lead_name:     string | null;
-  lead_stage:    string;
+  lead_stage:    string | null;
   agent_name:    string | null;
+  reply_mode:    'ai' | 'operator';
+  mode_version:  number;
+  whatsapp_opted_out: boolean;
+  whatsapp_handoff: boolean;
 }
 
 export interface Message {
@@ -69,6 +84,12 @@ export interface Message {
   tokens_output: number | null;
   latency_ms:    number | null;
   created_at:    string;
+  sender_type:   'customer' | 'ai' | 'operator' | 'system';
+  author_user_id: string | null;
+  delivery_status: 'received' | 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'not_applicable';
+  external_id: string | null;
+  provider_message_id: string | null;
+  sequence_id: number;
 }
 
 export interface Recording {

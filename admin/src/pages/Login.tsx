@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import api from '../api';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 
 interface Props { onLogin: () => void }
 
 export default function Login({ onLogin }: Props) {
-  const [email, setEmail] = useState('demo@flowers.kz');
+  const [email,    setEmail]    = useState('demo@flowers.kz');
   const [password, setPassword] = useState('demo1234');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError('');
+    setError(null);
     setLoading(true);
     try {
       const { data } = await api.post('/auth/login', { email, password });
@@ -23,40 +25,29 @@ export default function Login({ onLogin }: Props) {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="text-4xl mb-2">🤖</div>
-          <h1 className="text-2xl font-bold text-gray-900">SalesAgent AI</h1>
-          <p className="text-gray-500 text-sm mt-1">Панель управления</p>
+    <div className="min-h-screen bg-bg-0 grid place-items-center relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 opacity-50"
+           style={{ background: 'radial-gradient(60% 60% at 50% 30%, rgba(0,177,79,.15), transparent 70%)' }} />
+      <div className="relative w-[360px] bg-bg-1 border border-line rounded-4 shadow-d-3 p-7">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="w-9 h-9 rounded-2 bg-accent text-accent-fg grid place-items-center font-bold">SA</div>
+          <div>
+            <div className="text-[15px] font-semibold">SalesAgent AI</div>
+            <div className="text-[11px] text-fg-2 uppercase tracking-wider">Admin</div>
+          </div>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email" value={email} onChange={e => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
-            <input
-              type="password" value={password} onChange={e => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              required
-            />
-          </div>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-          <button
-            type="submit" disabled={loading}
-            className="w-full bg-brand-500 hover:bg-brand-600 text-white font-medium py-2 rounded-lg transition-colors disabled:opacity-50"
-          >
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
+        <h1 className="text-[20px] font-semibold mb-1">Вход</h1>
+        <p className="text-[13px] text-fg-1 mb-5">Управляй разговорами и агентами</p>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <Input label="Email" type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} />
+          <Input label="Пароль" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
+          {error && <div className="text-[12px] text-danger">{error}</div>}
+          <Button type="submit" loading={loading} className="w-full justify-center">
+            {loading ? 'Вход…' : 'Войти'}
+          </Button>
         </form>
       </div>
     </div>

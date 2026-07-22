@@ -1,13 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Mic, MicOff, Phone, PhoneOff, Settings, Volume2 } from 'lucide-react';
-
-/**
- * Страница тестирования голосовых звонков.
- * Подключается к Gemini Live API напрямую из браузера через WebSocket.
- * Не нужен Voximplant, публичный сервер или наш бэкенд.
- *
- * Требуется: Google API Key с доступом к Gemini Live.
- */
+import { Card, CardHeader } from '../ui/Card';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 
 const AIGUL_PROMPT = `Ты — Айгуль, менеджер по продажам цветочного магазина в Алматы. Говори на русском языке. Твоя задача — помочь клиенту выбрать букет и оформить заказ.
 
@@ -30,6 +25,14 @@ interface LogEntry {
   type: 'info' | 'user' | 'agent' | 'error' | 'tool';
   text: string;
 }
+
+const LOG_COLOR: Record<LogEntry['type'], string> = {
+  info:  'text-fg-2',
+  user:  'text-[#60a5fa]',
+  agent: 'text-ok',
+  error: 'text-danger',
+  tool:  'text-warn',
+};
 
 export default function VoiceTest() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('gemini_api_key') ?? '');
@@ -55,12 +58,14 @@ export default function VoiceTest() {
     }]);
   }, []);
 
-  // Автоскролл логов
+  useEffect(() => {
+    localStorage.setItem('gemini_api_key', apiKey);
+  }, [apiKey]);
+
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // Воспроизвести очередь аудио
   const playAudioQueue = useCallback(() => {
     if (playingRef.current || playQueueRef.current.length === 0) return;
     playingRef.current = true;
@@ -77,114 +82,113 @@ export default function VoiceTest() {
     source.connect(ctx.destination);
     source.onended = () => {
       playingRef.current = false;
-      playAudioQueue(); // Играем следующий чанк
+      playAudioQueue();
     };
     source.start();
   }, []);
 
-  // Подключиться к Gemini Live (через наш бэкенд-прокси)
-  const connect = useCallback(async () => {
-    addLog('info', 'Подключение к Gemini Live (через прокси)...');
+  const startCapture = useCallback((ctx: AudioContext, stream: MediaStream, ws: WebSocket) => {
+    const source = ctx.createMediaStreamSource(stream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    processorRef.current = processor;
 
+    processor.onaudioprocess = (e) => {
+      if (ws.readyState !== WebSocket.OPEN || muted) return;
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm16 = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const s = Math.max(-1, Math.min(1, input[i]!));
+        pcm16[i] = s < 0 ? s * 32768 : s * 32767;
+      }
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+      ws.send(JSON.stringify({
+        realtimeInput: {
+          mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: base64 }],
+        },
+      }));
+    };
+
+    source.connect(processor);
+    processor.connect(ctx.destination);
+  }, [muted]);
+
+  const stopCapture = useCallback(() => {
+    processorRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    audioContextRef.current?.close();
+    processorRef.current = null;
+    streamRef.current = null;
+    audioContextRef.current = null;
+  }, []);
+
+  const connect = useCallback(async () => {
+    addLog('info', 'Подключение к Gemini Live (через прокси)…');
     try {
-      // 1. Получаем микрофон
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
       streamRef.current = stream;
       addLog('info', 'Микрофон подключён');
 
-      // 2. AudioContext
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = ctx;
 
-      // 3. WebSocket к нашему прокси (он уже знает GOOGLE_API_KEY)
-      const wsUrl = `ws://127.0.0.1:3002/ws/gemini-live?model=${encodeURIComponent(model)}`;
+      const wsUrl = `ws://127.0.0.1:3003/ws/gemini-live?model=${encodeURIComponent(model)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        addLog('info', 'WebSocket подключён, отправляю setup...');
-
-        // Setup message
+        addLog('info', 'WebSocket подключён, отправляю setup…');
         ws.send(JSON.stringify({
           setup: {
             model: `models/${model}`,
             generationConfig: {
               responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: 'Aoede' },
-                },
-              },
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } },
             },
-            systemInstruction: {
-              parts: [{ text: AIGUL_PROMPT }],
-            },
+            systemInstruction: { parts: [{ text: AIGUL_PROMPT }] },
           },
         }));
       };
 
       ws.onmessage = (event) => {
         let msg: Record<string, unknown>;
-        try {
-          msg = JSON.parse(event.data as string);
-        } catch {
-          return;
-        }
+        try { msg = JSON.parse(event.data as string); } catch { return; }
 
-        // Setup complete
         if (msg['setupComplete']) {
-          addLog('info', '✅ Gemini Live готов! Говорите...');
+          addLog('info', 'Gemini Live готов. Говорите…');
           setConnected(true);
           setShowSettings(false);
           startCapture(ctx, stream, ws);
           return;
         }
 
-        // Server content (audio/text response)
         const serverContent = msg['serverContent'] as Record<string, unknown> | undefined;
         if (serverContent) {
           const modelTurn = serverContent['modelTurn'] as Record<string, unknown> | undefined;
           if (modelTurn?.['parts']) {
             const parts = modelTurn['parts'] as Array<Record<string, unknown>>;
             for (const part of parts) {
-              // Аудио ответ
               if (part['inlineData']) {
                 const inlineData = part['inlineData'] as Record<string, string>;
                 const base64 = inlineData['data']!;
                 const pcmBytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
                 const pcm16 = new Int16Array(pcmBytes.buffer);
-
-                // Конвертируем Int16 → Float32 для Web Audio
                 const float32 = new Float32Array(pcm16.length);
-                for (let i = 0; i < pcm16.length; i++) {
-                  float32[i] = pcm16[i]! / 32768;
-                }
+                for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i]! / 32768;
                 playQueueRef.current.push(float32);
                 playAudioQueue();
               }
-
-              // Текстовый транскрипт
-              if (part['text']) {
-                addLog('agent', part['text'] as string);
-              }
+              if (part['text']) addLog('agent', part['text'] as string);
             }
           }
-
-          // Конец реплики
-          if (serverContent['turnComplete']) {
-            addLog('info', '— конец реплики —');
-          }
+          if (serverContent['turnComplete']) addLog('info', '— конец реплики —');
         }
 
-        // Tool call
         const toolCall = msg['toolCall'] as Record<string, unknown> | undefined;
         if (toolCall?.['functionCalls']) {
           const calls = toolCall['functionCalls'] as Array<Record<string, unknown>>;
-          for (const call of calls) {
-            addLog('tool', `🔧 ${call['name']}: ${JSON.stringify(call['args'])}`);
-          }
+          for (const call of calls) addLog('tool', `${call['name']}: ${JSON.stringify(call['args'])}`);
         }
       };
 
@@ -201,52 +205,8 @@ export default function VoiceTest() {
     } catch (err) {
       addLog('error', `Ошибка: ${(err as Error).message}`);
     }
-  }, [apiKey, model, addLog, playAudioQueue]);
+  }, [model, addLog, playAudioQueue, startCapture, stopCapture]);
 
-  // Захват аудио с микрофона и отправка в Gemini
-  const startCapture = useCallback((ctx: AudioContext, stream: MediaStream, ws: WebSocket) => {
-    const source = ctx.createMediaStreamSource(stream);
-    // ScriptProcessorNode для получения PCM-данных
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
-
-    processor.onaudioprocess = (e) => {
-      if (ws.readyState !== WebSocket.OPEN || muted) return;
-
-      const input = e.inputBuffer.getChannelData(0);
-      // Float32 → Int16
-      const pcm16 = new Int16Array(input.length);
-      for (let i = 0; i < input.length; i++) {
-        const s = Math.max(-1, Math.min(1, input[i]!));
-        pcm16[i] = s < 0 ? s * 32768 : s * 32767;
-      }
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-
-      ws.send(JSON.stringify({
-        realtimeInput: {
-          mediaChunks: [{
-            mimeType: 'audio/pcm;rate=16000',
-            data: base64,
-          }],
-        },
-      }));
-    };
-
-    source.connect(processor);
-    processor.connect(ctx.destination);
-  }, [muted]);
-
-  // Остановить захват
-  const stopCapture = useCallback(() => {
-    processorRef.current?.disconnect();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    audioContextRef.current?.close();
-    processorRef.current = null;
-    streamRef.current = null;
-    audioContextRef.current = null;
-  }, []);
-
-  // Отключиться
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     stopCapture();
@@ -255,155 +215,118 @@ export default function VoiceTest() {
     addLog('info', 'Звонок завершён');
   }, [stopCapture, addLog]);
 
-  const LOG_COLORS: Record<string, string> = {
-    info:  'text-gray-400',
-    user:  'text-blue-400',
-    agent: 'text-green-400',
-    error: 'text-red-400',
-    tool:  'text-orange-400',
-  };
-
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="p-6 max-w-4xl mx-auto space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Тест голосового звонка</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Gemini Live — прямое подключение из браузера</p>
+          <h1 className="text-[15px] font-semibold text-fg-0">Тест голосового звонка</h1>
+          <p className="text-[12px] text-fg-2 mt-0.5">Gemini Live — прямое подключение из браузера</p>
         </div>
-        <button
-          onClick={() => setShowSettings(s => !s)}
-          className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
-        >
-          <Settings size={20} />
-        </button>
+        <Button variant="ghost" size="sm" onClick={() => setShowSettings(s => !s)} iconLeft={<Settings size={13} />}>
+          Настройки
+        </Button>
       </div>
 
-      {/* Настройки */}
       {showSettings && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-4">
-          <h3 className="font-semibold text-gray-900">Настройки</h3>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Google API Key</label>
-            <input
+        <Card>
+          <CardHeader title="Настройки" />
+          <div className="space-y-3">
+            <Input
+              label="Google API Key"
               type="password"
               value={apiKey}
               onChange={e => setApiKey(e.target.value)}
-              placeholder="AIza..."
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 font-mono"
+              placeholder="AIza…"
+              hint="Получить на aistudio.google.com/apikey"
+              className="font-mono"
             />
-            <p className="text-xs text-gray-400 mt-1">
-              Получить на <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-brand-500 underline">aistudio.google.com/apikey</a>
-            </p>
+            <div className="flex flex-col gap-1 text-[13px]">
+              <span className="text-fg-1">Модель</span>
+              <select
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                className="h-9 bg-bg-1 border border-line rounded-2 px-3 text-fg-0 outline-none focus:border-accent text-[13px]"
+              >
+                <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview</option>
+                <option value="gemini-2.5-flash-native-audio-latest">gemini-2.5-flash-native-audio-latest</option>
+                <option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio-preview-12-2025</option>
+                <option value="gemini-2.5-flash-native-audio-preview-09-2025">gemini-2.5-flash-native-audio-preview-09-2025</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Модель</label>
-            <select
-              value={model}
-              onChange={e => setModel(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview ⭐</option>
-              <option value="gemini-2.5-flash-native-audio-latest">gemini-2.5-flash-native-audio-latest</option>
-              <option value="gemini-2.5-flash-native-audio-preview-12-2025">gemini-2.5-flash-native-audio-preview-12-2025</option>
-              <option value="gemini-2.5-flash-native-audio-preview-09-2025">gemini-2.5-flash-native-audio-preview-09-2025</option>
-            </select>
-          </div>
-        </div>
+        </Card>
       )}
 
-      {/* Панель звонка */}
-      <div className="bg-gray-900 rounded-2xl p-8 text-white text-center shadow-lg">
-        <div className="mb-6">
-          <div className="text-5xl mb-3">🌸</div>
-          <div className="text-lg font-semibold">Айгуль</div>
-          <div className="text-sm text-gray-400">Менеджер цветочного магазина</div>
-          <div className={`text-xs mt-2 ${connected ? 'text-green-400' : 'text-gray-500'}`}>
-            {connected ? '● На связи — говорите' : '○ Не подключено'}
+      <Card className="!bg-bg-1 text-center">
+        <div className="mb-5">
+          <div className="w-14 h-14 mx-auto rounded-full bg-accent/15 text-accent grid place-items-center text-[18px] font-semibold mb-2">А</div>
+          <div className="text-[15px] font-semibold text-fg-0">Айгуль</div>
+          <div className="text-[12px] text-fg-2">Менеджер цветочного магазина</div>
+          <div className={`num text-[11px] mt-2 uppercase tracking-wider ${connected ? 'text-ok' : 'text-fg-2'}`}>
+            {connected ? '● На связи' : '○ Не подключено'}
           </div>
         </div>
 
-        <div className="flex items-center justify-center gap-6">
-          {/* Мут */}
+        <div className="flex items-center justify-center gap-5">
           <button
             onClick={() => setMuted(m => !m)}
             disabled={!connected}
-            className={`w-14 h-14 rounded-full flex items-center justify-center transition-colors ${
-              !connected ? 'bg-gray-700 text-gray-500' :
-              muted ? 'bg-red-500 hover:bg-red-600 text-white' :
-              'bg-gray-700 hover:bg-gray-600 text-white'
+            aria-label={muted ? 'Включить микрофон' : 'Заглушить'}
+            className={`w-12 h-12 rounded-full grid place-items-center transition-colors ${
+              !connected ? 'bg-bg-2 text-fg-2' :
+              muted ? 'bg-danger text-white' :
+              'bg-bg-2 text-fg-0 hover:bg-line'
             }`}
           >
-            {muted ? <MicOff size={22} /> : <Mic size={22} />}
+            {muted ? <MicOff size={20} /> : <Mic size={20} />}
           </button>
 
-          {/* Звонок / Повесить */}
           {!connected ? (
             <button
               onClick={() => void connect()}
               disabled={!apiKey.trim()}
-              className="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 text-white flex items-center justify-center transition-colors shadow-lg shadow-green-500/30"
+              aria-label="Позвонить"
+              className="w-14 h-14 rounded-full bg-accent hover:brightness-110 disabled:bg-bg-2 disabled:text-fg-2 text-accent-fg grid place-items-center transition-all shadow-d-3"
             >
-              <Phone size={26} />
+              <Phone size={22} />
             </button>
           ) : (
             <button
               onClick={disconnect}
-              className="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-lg shadow-red-500/30"
+              aria-label="Завершить"
+              className="w-14 h-14 rounded-full bg-danger hover:brightness-110 text-white grid place-items-center transition-all shadow-d-3"
             >
-              <PhoneOff size={26} />
+              <PhoneOff size={22} />
             </button>
           )}
 
-          {/* Динамик */}
-          <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
-            connected ? 'bg-gray-700 text-white' : 'bg-gray-700 text-gray-500'
-          }`}>
-            <Volume2 size={22} />
+          <div className={`w-12 h-12 rounded-full grid place-items-center ${connected ? 'bg-bg-2 text-fg-0' : 'bg-bg-2 text-fg-2'}`}>
+            <Volume2 size={20} />
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Лог разговора */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-sm">
-        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-          <h3 className="font-medium text-gray-300 text-sm">Лог разговора</h3>
+      <Card padding="none">
+        <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+          <h3 className="text-[13px] font-semibold text-fg-0">Лог разговора</h3>
           {logs.length > 0 && (
-            <button onClick={() => setLogs([])} className="text-xs text-gray-500 hover:text-gray-300">
+            <button onClick={() => setLogs([])} className="text-[11px] text-fg-2 hover:text-fg-0">
               Очистить
             </button>
           )}
         </div>
-        <div className="p-4 max-h-80 overflow-y-auto font-mono text-xs space-y-1">
-          {logs.length === 0 ? (
-            <div className="text-gray-600 text-center py-4">
-              Нажмите кнопку звонка чтобы начать
-            </div>
-          ) : (
-            logs.map((log, i) => (
-              <div key={i} className={LOG_COLORS[log.type]}>
-                <span className="text-gray-600">{log.time}</span>{' '}
-                {log.text}
-              </div>
-            ))
-          )}
+        <div className="p-4 max-h-80 overflow-y-auto font-mono text-[11px] space-y-0.5">
+          {logs.length === 0
+            ? <div className="text-fg-2 text-center py-4">Нажми зелёную кнопку, чтобы начать.</div>
+            : logs.map((log, i) => (
+                <div key={i} className={LOG_COLOR[log.type]}>
+                  <span className="text-fg-2">{log.time}</span>{' '}{log.text}
+                </div>
+              ))
+          }
           <div ref={logsEndRef} />
         </div>
-      </div>
-
-      {/* Инструкция */}
-      <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 text-sm text-blue-800">
-        <p className="font-medium mb-2">Как использовать:</p>
-        <ol className="list-decimal ml-4 space-y-1">
-          <li>Получите Google API Key на <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="underline">aistudio.google.com</a></li>
-          <li>Вставьте ключ в поле выше</li>
-          <li>Нажмите зелёную кнопку — разрешите доступ к микрофону</li>
-          <li>Говорите на русском — Айгуль ответит голосом</li>
-          <li>Красная кнопка — завершить звонок</li>
-        </ol>
-        <p className="mt-2 text-xs text-blue-600">
-          Звонок идёт напрямую из браузера в Gemini Live API. Не нужен Voximplant или публичный сервер.
-        </p>
-      </div>
+      </Card>
     </div>
   );
 }

@@ -500,7 +500,11 @@ app.delete('/api/v1/knowledge/:filename', authMiddleware, (_req, res) => res.jso
 app.get('/api/v1/agents', authMiddleware, (_req, res) => res.json({ agents }));
 app.get('/api/v1/agents/:id', authMiddleware, (req, res) => {
   const a = agents.find(x => x.id === req.params['id']);
-  a ? res.json(a) : res.status(404).json({ error: 'Not found' });
+  if (a) {
+    res.json(a);
+  } else {
+    res.status(404).json({ error: 'Not found' });
+  }
 });
 app.post('/api/v1/agents', authMiddleware, (req, res) => {
   const a = { id: uuid(), org_id: ORG_ID, ...req.body, created_at: new Date().toISOString() };

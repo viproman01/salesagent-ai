@@ -1,178 +1,306 @@
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
+import { Bot, Loader2, Send, User } from 'lucide-react';
 import api from '../api';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { Badge } from '../ui/Badge';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
 
 interface Message {
+  id: string;
   role: 'user' | 'assistant';
   text: string;
   time: string;
 }
 
-/**
- * Веб-чат с AI-агентом Айгуль (без Telegram).
- * Использует тот же Claude Sonnet что и основной агент.
- */
+interface ChatStatusResponse {
+  enabled: boolean;
+  ready: boolean;
+  agentName: string | null;
+}
+
+interface ChatHistoryResponse {
+  conversationId: string | null;
+  messages: Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    createdAt: string;
+  }>;
+}
+
+interface ChatReplyResponse {
+  reply: string;
+}
+
+const SUGGESTIONS = [
+  'Хочу букет жене на день рождения',
+  'Что есть до 10 000 тенге?',
+  'Какие розы в наличии?',
+  'Сколько стоит доставка?',
+];
+
+function formatTime(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+function greeting(): Message {
+  return {
+    id: 'local-greeting',
+    role: 'assistant',
+    text: 'Здравствуйте. Я Айгуль — AI-ассистент цветочного магазина в Алматы. Помогу подобрать букет и оформить доставку. Что ищете?',
+    time: formatTime(new Date()),
+  };
+}
+
+function isNotFound(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
 export default function Chat() {
   const [sessionId] = useState(() => {
     const stored = sessionStorage.getItem('chat_session');
     if (stored) return stored;
-    const id = Math.random().toString(36).slice(2, 10);
+    const id = crypto.randomUUID();
     sessionStorage.setItem('chat_session', id);
     return id;
   });
-
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      text: 'Здравствуйте! 🌸 Я Айгуль, менеджер цветочного магазина в Алматы. Помогу подобрать букет и оформить доставку. Что ищете?',
-      time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => [greeting()]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const historyAppliedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  const statusQuery = useQuery({
+    queryKey: ['chat-status'],
+    queryFn: async (): Promise<ChatStatusResponse | null> => {
+      try {
+        const response = await api.get<ChatStatusResponse>('/chat/status');
+        return response.data;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    refetchInterval: 15_000,
+    retry: 1,
+  });
+
+  const historyQuery = useQuery({
+    queryKey: ['chat-history', sessionId],
+    queryFn: async (): Promise<ChatHistoryResponse | null> => {
+      try {
+        const response = await api.get<ChatHistoryResponse>(
+          `/chat/${encodeURIComponent(sessionId)}/history`,
+        );
+        return response.data;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    retry: 1,
+  });
+
+  useEffect(() => {
+    if (!historyQuery.isSuccess || historyAppliedRef.current) return;
+    historyAppliedRef.current = true;
+    if (!historyQuery.data?.messages.length) return;
+    setMessages(historyQuery.data.messages.map(message => ({
+      id: message.id,
+      role: message.role,
+      text: message.content,
+      time: formatTime(message.createdAt),
+    })));
+  }, [historyQuery.data, historyQuery.isSuccess]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
+  const status = statusQuery.data;
+  const explicitlyUnavailable = Boolean(status && (!status.enabled || !status.ready));
+  const canSend = !loading && !historyQuery.isLoading && !explicitlyUnavailable;
+  const assistantName = status?.agentName?.trim() || 'Айгуль';
 
-    const now = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    setMessages(m => [...m, { role: 'user', text, time: now }]);
+  let readinessLabel = 'Статус не подтверждён';
+  let readinessTone: 'neutral' | 'ok' | 'warn' | 'danger' = 'neutral';
+  let readinessDetail = 'Статус-маршрут недоступен; фактическая готовность проверится при отправке.';
+  if (statusQuery.isLoading) {
+    readinessLabel = 'Проверка…';
+    readinessDetail = 'Проверяем AI-агента.';
+  } else if (status?.enabled && status.ready) {
+    readinessLabel = 'Автоответ включён';
+    readinessTone = 'ok';
+    readinessDetail = `AI-агент «${assistantName}» готов отвечать.`;
+  } else if (status && !status.enabled) {
+    readinessLabel = 'Автоответ выключен';
+    readinessTone = 'danger';
+    readinessDetail = 'Включите TEXT_CHAT_ENABLED на сервере.';
+  } else if (status && !status.ready) {
+    readinessLabel = 'AI не готов';
+    readinessTone = 'warn';
+    readinessDetail = 'Нет активного агента или провайдер ещё не готов.';
+  } else if (statusQuery.isError) {
+    readinessLabel = 'Статус недоступен';
+    readinessTone = 'warn';
+    readinessDetail = 'Не удалось проверить готовность AI.';
+  }
+
+  const send = async (): Promise<void> => {
+    const text = input.trim();
+    if (!text || !canSend) return;
+
+    setMessages(current => [...current, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      text,
+      time: formatTime(new Date()),
+    }]);
     setInput('');
     setLoading(true);
 
     try {
-      const { data } = await api.post('/chat', { message: text, sessionId });
-      setMessages(m => [...m, {
+      const { data } = await api.post<ChatReplyResponse>('/chat', { message: text, sessionId });
+      setMessages(current => [...current, {
+        id: crypto.randomUUID(),
         role: 'assistant',
         text: data.reply,
-        time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        time: formatTime(new Date()),
       }]);
-    } catch (err: unknown) {
-      const errMsg = (err as { response?: { data?: { error?: string } }; message?: string }).response?.data?.error
-        ?? (err as Error).message;
-      setMessages(m => [...m, {
+      void statusQuery.refetch();
+    } catch (error: unknown) {
+      const errorMessage = axios.isAxiosError(error)
+        ? error.response?.data?.error || error.message
+        : error instanceof Error ? error.message : 'Неизвестная ошибка';
+      setMessages(current => [...current, {
+        id: crypto.randomUUID(),
         role: 'assistant',
-        text: `❌ Ошибка: ${errMsg}`,
-        time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        text: `Ошибка: ${errorMessage}`,
+        time: formatTime(new Date()),
       }]);
+      void statusQuery.refetch();
     } finally {
       setLoading(false);
     }
   };
 
-  const reset = () => {
+  const reset = (): void => {
     sessionStorage.removeItem('chat_session');
     window.location.reload();
   };
 
-  const SUGGESTIONS = [
-    'Хочу букет жене на день рождения',
-    'Что есть до 10 000 тенге?',
-    'Какие розы в наличии?',
-    'Сколько стоит доставка?',
-  ];
-
   return (
-    <div className="flex flex-col h-[calc(100vh-3rem)] max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-col h-[calc(100vh-48px)] max-w-3xl mx-auto px-4 py-4">
+      <div className="flex items-center justify-between gap-3 mb-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Чат с Айгуль</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Тестирование AI-агента в браузере</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-[15px] font-semibold text-fg-0">Чат с AI-ассистентом {assistantName}</h1>
+            <Badge tone={readinessTone} size="sm">{readinessLabel}</Badge>
+          </div>
+          <p className="text-[12px] text-fg-2 mt-0.5">{readinessDetail}</p>
+          {historyQuery.isError && (
+            <p className="text-[11px] text-warn mt-0.5">Историю не удалось загрузить.</p>
+          )}
         </div>
-        <button
-          onClick={reset}
-          className="text-xs text-gray-500 hover:text-gray-900 px-3 py-1.5 border border-gray-200 rounded-lg"
-        >
-          Новый разговор
-        </button>
+        <Button variant="secondary" size="sm" onClick={reset}>Новый разговор</Button>
       </div>
 
-      {/* Чат */}
-      <div className="flex-1 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                msg.role === 'user' ? 'bg-gray-200 text-gray-600' : 'bg-brand-500 text-white'
-              }`}>
-                {msg.role === 'user' ? <User size={15} /> : <Bot size={15} />}
-              </div>
-              <div className={`max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'} flex flex-col`}>
-                <div className={`px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
-                  msg.role === 'user'
-                    ? 'bg-brand-500 text-white rounded-br-sm'
-                    : 'bg-gray-100 text-gray-800 rounded-bl-sm'
-                }`}>
-                  {msg.text}
-                </div>
-                <span className="text-xs text-gray-400 mt-1 px-2">{msg.time}</span>
-              </div>
+      <Card padding="none" className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {historyQuery.isLoading && (
+            <div className="flex items-center justify-center gap-2 py-4 text-[12px] text-fg-2">
+              <Loader2 size={14} className="animate-spin" />
+              Загружаем историю…
             </div>
-          ))}
-
-          {loading && (
-            <div className="flex gap-3">
-              <div className="w-8 h-8 rounded-full bg-brand-500 text-white flex items-center justify-center shrink-0">
-                <Bot size={15} />
+          )}
+          {!historyQuery.isLoading && messages.map(message => {
+            const fromUser = message.role === 'user';
+            return (
+              <div key={message.id} className={`flex gap-2 ${fromUser ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-7 h-7 rounded-full grid place-items-center shrink-0 ${
+                  fromUser ? 'bg-bg-2 text-fg-1' : 'bg-accent text-accent-fg'
+                }`}>
+                  {fromUser ? <User size={13} /> : <Bot size={13} />}
+                </div>
+                <div className={`max-w-[78%] ${fromUser ? 'items-end' : 'items-start'} flex flex-col`}>
+                  <div className={
+                    fromUser
+                      ? 'px-3 py-2 rounded-3 rounded-br-sm text-[13px] whitespace-pre-wrap bg-bg-2 text-fg-0 border border-line'
+                      : 'px-3 py-2 rounded-3 rounded-bl-sm text-[13px] whitespace-pre-wrap bg-accent/15 text-fg-0 border border-accent/30'
+                  }>
+                    {message.text}
+                  </div>
+                  <span className="num text-[10px] text-fg-2 mt-1 px-1">{message.time}</span>
+                </div>
               </div>
-              <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin text-gray-400" />
-                <span className="text-sm text-gray-400">Айгуль печатает...</span>
+            );
+          })}
+          {loading && (
+            <div className="flex gap-2">
+              <div className="w-7 h-7 rounded-full bg-accent text-accent-fg grid place-items-center shrink-0">
+                <Bot size={13} />
+              </div>
+              <div className="bg-bg-2 rounded-3 rounded-bl-sm px-3 py-2 flex items-center gap-2 border border-line">
+                <Loader2 size={12} className="animate-spin text-fg-2" />
+                <span className="text-[12px] text-fg-2">{assistantName} печатает…</span>
               </div>
             </div>
           )}
-
           <div ref={endRef} />
         </div>
 
-        {/* Подсказки */}
-        {messages.length <= 1 && (
-          <div className="px-5 py-3 border-t border-gray-100 bg-gray-50">
-            <div className="text-xs text-gray-500 mb-2">Попробуйте:</div>
-            <div className="flex flex-wrap gap-2">
-              {SUGGESTIONS.map(s => (
+        {messages.length <= 1 && !historyQuery.isLoading && (
+          <div className="px-4 py-3 border-t border-line bg-bg-2/40">
+            <div className="text-[10px] uppercase tracking-wider text-fg-2 mb-2">Попробуй</div>
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTIONS.map(suggestion => (
                 <button
-                  key={s}
-                  onClick={() => setInput(s)}
-                  className="text-xs px-3 py-1.5 bg-white border border-gray-200 rounded-full hover:bg-brand-50 hover:border-brand-200 hover:text-brand-700 transition-colors"
+                  key={suggestion}
+                  onClick={() => setInput(suggestion)}
+                  disabled={!canSend}
+                  className="text-[12px] px-2.5 h-7 rounded-full bg-bg-0 border border-line text-fg-1 hover:text-fg-0 hover:border-fg-2/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {s}
+                  {suggestion}
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        {/* Input */}
-        <div className="p-4 border-t border-gray-100">
-          <div className="flex gap-2">
-            <input
+        <div className="p-3 border-t border-line">
+          <div className="flex gap-2 items-end">
+            <textarea
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
-              placeholder="Напишите сообщение..."
-              disabled={loading}
-              className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-50"
+              onChange={event => setInput(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+              placeholder={explicitlyUnavailable ? 'Автоответ сейчас недоступен' : 'Сообщение… Enter — отправить'}
+              disabled={!canSend}
+              rows={1}
+              className="flex-1 bg-bg-1 border border-line rounded-2 p-2.5 text-[13px] resize-none min-h-[40px] max-h-[160px] text-fg-0 outline-none focus:border-accent disabled:opacity-50"
             />
-            <button
+            <Button
               onClick={() => void send()}
-              disabled={loading || !input.trim()}
-              className="w-11 h-11 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl flex items-center justify-center transition-colors shrink-0"
+              disabled={!canSend || !input.trim()}
+              size="md"
+              iconLeft={<Send size={14} />}
             >
-              <Send size={17} />
-            </button>
+              Отпр.
+            </Button>
           </div>
-          <p className="text-xs text-gray-400 mt-2 text-center">
-            AI может вызывать инструменты: search_knowledge, update_lead, book_meeting
+          <p className="text-[10px] text-fg-2 mt-2 text-center">
+            Вы общаетесь с AI-ассистентом. История сохраняется в разделе «Разговоры».
           </p>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
