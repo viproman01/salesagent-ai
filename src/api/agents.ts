@@ -8,7 +8,7 @@ export const agentsRouter = Router();
 const agentSchema = z.object({
   name:          z.string().min(1).max(100),
   system_prompt: z.string().min(10),
-  channels:      z.array(z.enum(['whatsapp', 'telegram', 'voice'])).min(1),
+  channels:      z.array(z.enum(['whatsapp', 'telegram', 'voice', 'webchat'])).min(1),
   voice_config:  z.object({
     voice:    z.string().default('Aoede'),
     language: z.string().default('ru-RU'),

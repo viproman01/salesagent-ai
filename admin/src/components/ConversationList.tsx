@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Mic, MessageSquare, Send } from 'lucide-react';
+import { Bot, Mic, MessageSquare, Send } from 'lucide-react';
 import type { Conversation } from '../api';
 import { cn } from '../ui/cn';
 import { Skeleton } from '../ui/Skeleton';
@@ -25,6 +25,7 @@ const CHANNEL_ICON: Record<string, JSX.Element> = {
   whatsapp: <Send size={11} className="text-ok" />,
   telegram: <MessageSquare size={11} className="text-[#60a5fa]" />,
   voice:    <Mic size={11} className="text-accent" />,
+  webchat:  <Bot size={11} className="text-accent" />,
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -57,8 +58,8 @@ export default function ConversationList({ items, selectedId, onSelect, loading 
         {v.getVirtualItems().map(row => {
           const c = items[row.index];
           const active = c.id === selectedId;
-          const name = c.lead_name ?? c.phone;
-          const initials = (name ?? '?').slice(0, 2).toUpperCase();
+          const name = c.lead_name?.trim() || c.phone?.trim() || 'Без контакта';
+          const initials = name === 'Без контакта' ? '?' : name.slice(0, 2).toUpperCase();
           return (
             <button
               key={c.id}
@@ -81,9 +82,18 @@ export default function ConversationList({ items, selectedId, onSelect, loading 
                   <div className="flex items-center gap-1.5 text-[11px] text-fg-1 truncate">
                     {CHANNEL_ICON[c.channel]}
                     <span className="text-fg-2">·</span>
-                    <span className="truncate">{STAGE_LABEL[c.lead_stage] ?? c.lead_stage}</span>
+                    <span className="truncate">
+                      {c.lead_stage ? (STAGE_LABEL[c.lead_stage] ?? c.lead_stage) : 'Без стадии'}
+                    </span>
                   </div>
-                  <span className="num text-[10px] text-fg-2 shrink-0">{c.message_count} msg</span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    {c.channel === 'whatsapp' && (
+                      <span className={`text-[9px] uppercase ${c.reply_mode === 'operator' ? 'text-warn' : 'text-ok'}`}>
+                        {c.whatsapp_opted_out ? 'STOP' : c.reply_mode === 'operator' ? 'Оператор' : 'AI'}
+                      </span>
+                    )}
+                    <span className="num text-[10px] text-fg-2">{c.message_count} msg</span>
+                  </span>
                 </div>
               </div>
             </button>

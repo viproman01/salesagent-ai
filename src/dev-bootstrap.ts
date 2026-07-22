@@ -142,7 +142,7 @@ async function seedDemoData(pgMem: { Pool: new () => any }) {
 
     await pool.query(
       `INSERT INTO agents (id, org_id, name, system_prompt, channels, is_active)
-       VALUES ($1, $2, $3, $4, ARRAY['whatsapp','telegram','voice'], true)`,
+       VALUES ($1, $2, $3, $4, ARRAY['whatsapp','telegram','voice','webchat'], true)`,
       [agentId, orgId, 'Айгуль', systemPrompt]
     );
 

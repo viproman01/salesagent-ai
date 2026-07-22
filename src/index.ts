@@ -13,7 +13,16 @@ import { conversationsRouter } from './api/conversations';
 import { knowledgeRouter } from './api/knowledge';
 import { agentsRouter } from './api/agents';
 import { recordingsRouter } from './api/recordings';
-import { handleWhatsAppWebhook } from './channels/whatsapp';
+import { chatRouter } from './api/chat';
+import { whatsappRouter } from './api/whatsapp';
+import {
+  initializeWhatsAppBridge,
+  shutdownWhatsAppBridge,
+} from './channels/whatsapp';
+import {
+  startWhatsAppOutboxWorker,
+  stopWhatsAppOutboxWorker,
+} from './whatsapp/outbox';
 import { handleTelegramWebhook } from './channels/telegram';
 import {
   handleVoximplantWebhook,
@@ -38,14 +47,15 @@ async function main() {
   app.use(cors({
     origin:      config.FRONTEND_URL,
     credentials: true,
-    methods:     ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   }));
   app.use(compression());
 
   // ---- Rate limiting (granular per endpoint type) ----
   app.use('/api/v1/conversations', chatLimit);
+  app.use('/api/v1/chat', chatLimit);
   app.use('/api/v1/', apiLimit);
-  app.post('/api/webhooks/', webhookLimit);
+  app.use('/api/webhooks', webhookLimit);
 
   // ---- Парсинг тела ----
   app.use(express.json({ limit: '10mb' }));
@@ -63,16 +73,19 @@ async function main() {
   app.use('/api/v1/knowledge',      knowledgeRouter);
   app.use('/api/v1/agents',         agentsRouter);
   app.use('/api/v1/recordings',     recordingsRouter);
+  app.use('/api/v1/chat',           chatRouter);
+  app.use('/api/v1/whatsapp',       whatsappRouter);
 
   // ---- Webhooks ----
-  app.post('/api/webhooks/whatsapp',   handleWhatsAppWebhook);
   app.post('/api/webhooks/telegram',   handleTelegramWebhook);
   app.post('/api/webhooks/voximplant', handleVoximplantWebhook);
 
-  // Webhook AmoCRM (OAuth callback)
-  app.get('/api/crm/amocrm/callback', async (req, res) => {
-    // TODO: обработка OAuth callback от AmoCRM
-    res.json({ ok: true, code: req.query['code'] });
+  // OAuth is intentionally disabled until a one-time state store and a
+  // server-side authorization-code exchange are implemented. Never echo an
+  // OAuth code back to the browser or logs.
+  app.get('/api/crm/amocrm/callback', (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.status(404).json({ error: 'Not found' });
   });
 
   // ---- Обработка ошибок ----
@@ -118,6 +131,10 @@ async function main() {
       env:  config.NODE_ENV,
     });
   });
+  void initializeWhatsAppBridge().catch(error => {
+    logger.error('WhatsApp session restore failed', { error });
+  });
+  startWhatsAppOutboxWorker();
 
   // Graceful shutdown
   let shutdownPromise: Promise<void> | undefined;
@@ -153,6 +170,10 @@ async function main() {
       });
 
       const voiceDrain = shutdownVoiceSessions();
+      const whatsappOutboxShutdown = stopWhatsAppOutboxWorker();
+      const whatsappShutdown = whatsappOutboxShutdown.then(() =>
+        shutdownWhatsAppBridge()
+      );
       const workerShutdown = Promise.allSettled([
         followUpWorker.close(),
         metricsWorker.close(),
@@ -179,7 +200,12 @@ async function main() {
           });
         }
       }
-      await Promise.all([webSocketServerClosed, httpServerClosed]);
+      await Promise.all([
+        webSocketServerClosed,
+        httpServerClosed,
+        whatsappShutdown,
+        whatsappOutboxShutdown,
+      ]);
       process.exit(0);
     })();
     return shutdownPromise;

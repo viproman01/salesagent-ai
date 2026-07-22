@@ -28,6 +28,7 @@ export type DatabaseSchemaSnapshot = Readonly<{
   serverVersionNumber: number;
   extensions: readonly string[];
   tables: readonly string[];
+  automationColumns: readonly string[];
   embeddingType: string | null;
   embeddingModelType: string | null;
   hasMatchKnowledge: boolean;
@@ -108,6 +109,20 @@ const REQUIRED_TABLES = Object.freeze([
   'crm_connections',
   'subscriptions',
   'usage_events',
+  'whatsapp_inbound_receipts',
+  'whatsapp_outbox',
+]);
+
+const REQUIRED_AUTOMATION_COLUMNS = Object.freeze([
+  'conversations.assigned_user_id',
+  'conversations.mode_version',
+  'conversations.reply_mode',
+  'messages.author_user_id',
+  'messages.delivery_status',
+  'messages.external_id',
+  'messages.provider_message_id',
+  'messages.sender_type',
+  'messages.sequence_id',
 ]);
 
 const REQUIRED_EXTENSIONS = Object.freeze(['uuid-ossp', 'pgcrypto', 'vector']);
@@ -407,6 +422,7 @@ export function createDefaultProductionReadinessDependencies(): ProductionReadin
           server_version_number: number | string;
           extensions: string[];
           tables: string[];
+          automation_columns: string[];
           embedding_type: string | null;
           embedding_model_type: string | null;
           has_match_knowledge: boolean;
@@ -421,6 +437,14 @@ export function createDefaultProductionReadinessDependencies(): ProductionReadin
                SELECT tablename FROM pg_tables
                WHERE schemaname = 'public' AND tablename = ANY($2::text[])
              ) AS tables,
+             ARRAY(
+               SELECT table_name || '.' || column_name
+               FROM information_schema.columns
+               WHERE table_schema = 'public'
+                 AND table_name IN ('conversations', 'messages')
+                 AND (table_name || '.' || column_name) = ANY($3::text[])
+               ORDER BY table_name, column_name
+             ) AS automation_columns,
              (
                SELECT format_type(attribute.atttypid, attribute.atttypmod)
                FROM pg_attribute attribute
@@ -451,7 +475,7 @@ export function createDefaultProductionReadinessDependencies(): ProductionReadin
                 AND oidvectortypes(procedure.proargtypes) =
                   'vector, integer, uuid, text, double precision'
              ) AS has_match_knowledge`,
-          [REQUIRED_EXTENSIONS, REQUIRED_TABLES]
+          [REQUIRED_EXTENSIONS, REQUIRED_TABLES, REQUIRED_AUTOMATION_COLUMNS]
         );
         const row = result.rows[0];
         if (!row) throw new Error('schema snapshot unavailable');
@@ -459,6 +483,7 @@ export function createDefaultProductionReadinessDependencies(): ProductionReadin
           serverVersionNumber: Number(row.server_version_number),
           extensions: row.extensions ?? [],
           tables: row.tables ?? [],
+          automationColumns: row.automation_columns ?? [],
           embeddingType: row.embedding_type,
           embeddingModelType: row.embedding_model_type,
           hasMatchKnowledge: row.has_match_knowledge,
@@ -700,6 +725,13 @@ function validateDatabaseSchema(snapshot: DatabaseSchemaSnapshot): CheckOutcome 
   }
   if (REQUIRED_TABLES.some(table => !snapshot.tables.includes(table))) {
     return fail('tables_missing');
+  }
+  if (
+    REQUIRED_AUTOMATION_COLUMNS.some(
+      column => !snapshot.automationColumns.includes(column)
+    )
+  ) {
+    return fail('automation_columns_missing');
   }
   if (snapshot.embeddingType !== 'vector(768)') {
     return fail('embedding_invalid');

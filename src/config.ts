@@ -52,6 +52,18 @@ const envSchema = z.object({
   // Cerebras Inference (optional fast voice lane)
   CEREBRAS_API_KEYS:          commaSeparatedSecrets,
 
+  // Автоматический текстовый чат в админ-панели
+  TEXT_CHAT_ENABLED: z.enum(['true', 'false'])
+    .default('false')
+    .transform(value => value === 'true'),
+  TEXT_CHAT_CEREBRAS_MODEL: z.string().min(1).default('gemma-4-31b'),
+  TEXT_CHAT_GEMINI_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),
+  TEXT_CHAT_TIMEOUT_MS: z.coerce.number().int().min(250).max(30_000).default(10_000),
+  TEXT_CHAT_HISTORY_MESSAGES: z.coerce.number().int().min(2).max(40).default(20),
+  TEXT_CHAT_CLASSIFICATION_ENABLED: z.enum(['true', 'false'])
+    .default('false')
+    .transform(value => value === 'true'),
+
   // Google Gemini
   GOOGLE_API_KEY:       z.string(),
   GEMINI_LIVE_MODEL:    z.string().default('gemini-3.1-flash-live-preview'),
@@ -137,10 +149,25 @@ const envSchema = z.object({
   VOXIMPLANT_API_KEY:    z.string().optional(),
   VOXIMPLANT_APP_NAME:   z.string().default('salesagent'),
 
-  // Wazzup24 (WhatsApp)
-  WAZZUP24_API_KEY:       z.string().optional(),
-  WAZZUP24_CHANNEL_ID:    z.string().optional(),
-  WAZZUP24_WEBHOOK_SECRET: z.string().optional(),
+  // Direct WhatsApp Web bridge (Baileys)
+  WHATSAPP_AUTH_DIR: z.string().min(1).default('./data/whatsapp-auth'),
+  WHATSAPP_AUTO_START: z.enum(['true', 'false'])
+    .default('true')
+    .transform(value => value === 'true'),
+  WHATSAPP_RECONNECT_BASE_DELAY_MS: z.coerce.number()
+    .int().min(250).max(60_000).default(1_000),
+  WHATSAPP_RECONNECT_MAX_DELAY_MS: z.coerce.number()
+    .int().min(1_000).max(300_000).default(30_000),
+  WHATSAPP_INBOUND_MAX_CHARS: z.coerce.number()
+    .int().min(1).max(65_536).default(4_096),
+  WHATSAPP_OUTBOUND_MAX_CHARS: z.coerce.number()
+    .int().min(1).max(65_536).default(4_096),
+  WHATSAPP_INBOUND_RATE_WINDOW_MS: z.coerce.number()
+    .int().min(1_000).max(3_600_000).default(60_000),
+  WHATSAPP_INBOUND_RATE_MAX_MESSAGES: z.coerce.number()
+    .int().min(1).max(1_000).default(12),
+  WHATSAPP_INBOUND_ORG_RATE_MAX_MESSAGES: z.coerce.number()
+    .int().min(1).max(100_000).default(240),
 
   // Telegram
   TELEGRAM_BOT_TOKEN:       z.string().optional(),
@@ -166,6 +193,14 @@ const envSchema = z.object({
   // Webhook base URL
   WEBHOOK_BASE_URL: z.string().optional(),
 }).superRefine((env, ctx) => {
+  if (env.TEXT_CHAT_ENABLED && !env.CEREBRAS_API_KEYS?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['CEREBRAS_API_KEYS'],
+      message: 'CEREBRAS_API_KEYS is required when TEXT_CHAT_ENABLED=true',
+    });
+  }
+
   if (
     env.ASSEMBLYAI_STT_MAX_TURN_SILENCE_MS <
     env.ASSEMBLYAI_STT_MIN_TURN_SILENCE_MS
@@ -186,6 +221,18 @@ const envSchema = z.object({
       path: ['ASSEMBLYAI_STT_FORCE_ENDPOINT_TIMEOUT_MS'],
       message:
         'ASSEMBLYAI_STT_FORCE_ENDPOINT_TIMEOUT_MS must be less than ASSEMBLYAI_STT_FINISH_TIMEOUT_MS',
+    });
+  }
+
+  if (
+    env.WHATSAPP_RECONNECT_MAX_DELAY_MS <
+    env.WHATSAPP_RECONNECT_BASE_DELAY_MS
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['WHATSAPP_RECONNECT_MAX_DELAY_MS'],
+      message:
+        'WHATSAPP_RECONNECT_MAX_DELAY_MS must be greater than or equal to WHATSAPP_RECONNECT_BASE_DELAY_MS',
     });
   }
 

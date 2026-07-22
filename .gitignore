@@ -12,6 +12,9 @@ node_modules/
 .pgdata/
 *.sql.bak
 
+# WhatsApp Web device credentials (never commit these)
+data/whatsapp-auth/
+
 # Vercel
 .vercel/
 

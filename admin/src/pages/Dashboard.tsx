@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { Users, MessageCircle, TrendingUp, Zap } from 'lucide-react';
-import api from '../api';
-import type { FunnelItem, TrendItem } from '../api';
+import api, { type FunnelItem, type TrendItem } from '../api';
 import KPICard from '../components/KPICard';
 import Sparkline from '../components/Sparkline';
 import FunnelChart from '../components/FunnelChart';

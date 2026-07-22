@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
 import {
   LayoutDashboard, MessageSquare, Mic, BookOpen, Bot, Phone, MessagesSquare,
-  Moon, Sun, LogOut
+  Moon, Sun, LogOut, MessageCircle
 } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 
@@ -53,6 +53,7 @@ export default function CommandPalette({ open, onOpenChange }: Props) {
             <Item icon={<Bot size={14} />}             label="Агенты"      onSelect={() => go('/agents')} />
             <Item icon={<Phone size={14} />}           label="Тест звонка" onSelect={() => go('/voice-test')} />
             <Item icon={<MessagesSquare size={14} />}  label="Чат"         onSelect={() => go('/chat')} />
+            <Item icon={<MessageCircle size={14} />}   label="WhatsApp"     onSelect={() => go('/whatsapp')} />
           </Command.Group>
 
           <Command.Group heading="Действия" className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-fg-2">

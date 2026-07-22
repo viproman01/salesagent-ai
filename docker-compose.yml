@@ -27,6 +27,9 @@ services:
       S3_BUCKET_RECORDINGS: ${S3_BUCKET_RECORDINGS:-recordings}
       S3_BUCKET_KNOWLEDGE: ${S3_BUCKET_KNOWLEDGE:-knowledge}
       S3_REGION: ${S3_REGION:-us-east-1}
+      WHATSAPP_AUTH_DIR: /app/data/whatsapp-auth
+    volumes:
+      - whatsapp_auth:/app/data/whatsapp-auth
     depends_on:
       postgres:
         condition: service_healthy
@@ -168,6 +171,7 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
+  whatsapp_auth:
 
 networks:
   salesagent-net:

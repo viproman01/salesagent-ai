@@ -27,8 +27,9 @@ COPY docker/app/entrypoint.sh /usr/local/bin/salesagent-entrypoint
 # Непривилегированный пользователь; Winston пишет production-логи в /app/logs.
 RUN addgroup -S appgroup \
   && adduser -S appuser -G appgroup \
-  && mkdir -p /app/logs \
-  && chown appuser:appgroup /app/logs \
+  && mkdir -p /app/logs /app/data/whatsapp-auth \
+  && chown -R appuser:appgroup /app/logs /app/data \
+  && chmod 0700 /app/data/whatsapp-auth \
   && chmod 0555 /usr/local/bin/salesagent-entrypoint
 USER appuser
 

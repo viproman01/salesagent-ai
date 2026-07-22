@@ -1,8 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
-import api from '../api';
-import type { Conversation } from '../api';
+import api, { type Conversation } from '../api';
 import ConversationView from '../components/ConversationView';
 import ConversationList from '../components/ConversationList';
 import ChipFilterRow from '../components/ChipFilterRow';
@@ -12,8 +11,8 @@ import { EmptyState } from '../ui/EmptyState';
 const CHANNELS = [
   { key: 'whatsapp',  label: 'WhatsApp' },
   { key: 'telegram',  label: 'Telegram' },
-  { key: 'instagram', label: 'Instagram' },
   { key: 'voice',     label: 'Voice' },
+  { key: 'webchat',   label: 'Веб-чат' },
 ];
 
 export default function Conversations() {
@@ -27,6 +26,7 @@ export default function Conversations() {
     queryFn:  () => api.get(`/conversations/${orgId}`, {
       params: { channel: channel ?? undefined, limit: 200 },
     }).then(r => r.data as { conversations: Conversation[]; total: number }),
+    refetchInterval: 5_000,
   });
 
   const items = useMemo(() => {
@@ -35,7 +35,7 @@ export default function Conversations() {
     const q = search.toLowerCase();
     return raw.filter(c =>
       (c.lead_name ?? '').toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q)
+      (c.phone ?? '').toLowerCase().includes(q)
     );
   }, [data, search]);
 

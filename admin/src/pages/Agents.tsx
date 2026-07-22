@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Save, Bot, Trash2 } from 'lucide-react';
-import api from '../api';
-import type { Agent } from '../api';
+import api, { type Agent } from '../api';
 import { Card, CardHeader } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -14,7 +13,7 @@ const DEFAULT_PROMPT = `Ты — AI-ассистент по продажам. Т
 Используй search_knowledge() для поиска информации о продуктах.
 Когда клиент готов купить — вызови update_lead(stage='negotiation').`;
 
-const CHANNELS = ['whatsapp', 'telegram', 'voice'] as const;
+const CHANNELS = ['whatsapp', 'telegram', 'voice', 'webchat'] as const;
 
 export default function Agents() {
   const qc = useQueryClient();

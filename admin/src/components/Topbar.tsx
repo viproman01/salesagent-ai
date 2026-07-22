@@ -5,6 +5,7 @@ import { KBD } from '../ui/KBD';
 const TITLES: Record<string, string> = {
   '/dashboard':     'Дашборд',
   '/chat':          'Чат с агентом',
+  '/whatsapp':      'WhatsApp',
   '/conversations': 'Разговоры',
   '/recordings':    'Записи',
   '/knowledge':     'База знаний',

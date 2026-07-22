@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Mic, Clock, Search } from 'lucide-react';
-import api from '../api';
-import type { Recording } from '../api';
+import api, { type Recording } from '../api';
 import AudioPlayer from '../components/AudioPlayer';
 import { Card, CardHeader } from '../ui/Card';
 import { Input } from '../ui/Input';
@@ -77,7 +76,7 @@ export default function Recordings() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[13px] text-fg-0 truncate">{r.lead_name ?? r.phone ?? '—'}</div>
-                      {r.quality_score != null && (
+                      {r.quality_score !== null && (
                         <Badge tone={r.quality_score >= 0.7 ? 'ok' : r.quality_score >= 0.4 ? 'warn' : 'danger'} size="sm">
                           {Math.round(r.quality_score * 100)}%
                         </Badge>

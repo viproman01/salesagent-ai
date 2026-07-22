@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import {
   LayoutDashboard, MessageSquare, Mic, BookOpen, Bot, LogOut,
-  Phone, MessagesSquare, PanelLeftClose, PanelLeftOpen, Moon, Sun
+  Phone, MessagesSquare, PanelLeftClose, PanelLeftOpen, Moon, Sun, MessageCircle
 } from 'lucide-react';
 import { Tooltip, TooltipProvider } from '../ui/Tooltip';
 import { useTheme } from '../hooks/useTheme';
@@ -11,6 +11,7 @@ import { cn } from '../ui/cn';
 const links = [
   { to: '/dashboard',     icon: LayoutDashboard, label: 'Дашборд' },
   { to: '/chat',          icon: MessagesSquare,  label: 'Чат' },
+  { to: '/whatsapp',      icon: MessageCircle,   label: 'WhatsApp' },
   { to: '/conversations', icon: MessageSquare,   label: 'Разговоры' },
   { to: '/recordings',    icon: Mic,             label: 'Записи' },
   { to: '/knowledge',     icon: BookOpen,        label: 'База знаний' },

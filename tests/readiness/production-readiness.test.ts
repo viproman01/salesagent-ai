@@ -28,6 +28,20 @@ const REQUIRED_TABLES = [
   'crm_connections',
   'subscriptions',
   'usage_events',
+  'whatsapp_inbound_receipts',
+  'whatsapp_outbox',
+];
+
+const REQUIRED_AUTOMATION_COLUMNS = [
+  'conversations.assigned_user_id',
+  'conversations.mode_version',
+  'conversations.reply_mode',
+  'messages.author_user_id',
+  'messages.delivery_status',
+  'messages.external_id',
+  'messages.provider_message_id',
+  'messages.sender_type',
+  'messages.sequence_id',
 ];
 
 function productionEnvironment(): NodeJS.ProcessEnv {
@@ -62,6 +76,7 @@ function readySchema(): DatabaseSchemaSnapshot {
     serverVersionNumber: 160_000,
     extensions: ['uuid-ossp', 'pgcrypto', 'vector'],
     tables: REQUIRED_TABLES,
+    automationColumns: REQUIRED_AUTOMATION_COLUMNS,
     embeddingType: 'vector(768)',
     embeddingModelType: 'text',
     hasMatchKnowledge: true,
@@ -495,6 +510,44 @@ test('reports database schema blockers with stable codes', async () => {
 
   assert.equal(results.find(result => result.id === 'db.schema')?.code, 'embedding_invalid');
   assert.equal(readinessExitCode(results, false), 1);
+});
+
+test('requires WhatsApp automation tables and state columns', async () => {
+  const missingAutomationColumn = await runProductionReadiness(
+    {
+      environment: productionEnvironment(),
+      timeoutMs: 1_000,
+      billing: false,
+    },
+    readyDependencies({
+      databaseSchema: async () => ({
+        ...readySchema(),
+        automationColumns: REQUIRED_AUTOMATION_COLUMNS.slice(1),
+      }),
+    })
+  );
+  assert.equal(
+    missingAutomationColumn.find(result => result.id === 'db.schema')?.code,
+    'automation_columns_missing'
+  );
+
+  const missingOutbox = await runProductionReadiness(
+    {
+      environment: productionEnvironment(),
+      timeoutMs: 1_000,
+      billing: false,
+    },
+    readyDependencies({
+      databaseSchema: async () => ({
+        ...readySchema(),
+        tables: REQUIRED_TABLES.filter(table => table !== 'whatsapp_outbox'),
+      }),
+    })
+  );
+  assert.equal(
+    missingOutbox.find(result => result.id === 'db.schema')?.code,
+    'tables_missing'
+  );
 });
 
 test('requires embedding model tracking and the five-argument search function', async () => {

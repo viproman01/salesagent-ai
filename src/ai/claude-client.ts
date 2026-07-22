@@ -4,7 +4,7 @@ import { logger } from '../utils/logger';
 import { AGENT_TOOLS, type ToolContext } from './tools';
 import { searchKnowledge } from '../rag/search';
 import { updateLeadStage } from '../crm/adapter';
-import { sendWhatsAppMessage } from '../channels/whatsapp';
+import { sendPolicyGatedWhatsAppReply } from '../whatsapp/safe-outbound';
 import pool from '../db';
 
 const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
@@ -80,14 +80,21 @@ export async function getAgentResponse(
         if (block.type !== 'tool_use') continue;
 
         toolsUsed.push(block.name);
-        logger.debug('Tool call', { tool: block.name, input: block.input, ...context });
+        logger.debug('Tool call', {
+          tool: block.name,
+          orgId: context.orgId,
+          conversationId: context.conversationId,
+        });
 
         let result: unknown;
         try {
           result = await executeTool(block.name, block.input as Record<string, unknown>, context);
         } catch (err) {
-          result = { error: String(err) };
-          logger.error('Tool execution failed', { tool: block.name, error: err });
+          result = { error: 'tool_execution_failed' };
+          logger.error('Tool execution failed', {
+            tool: block.name,
+            code: err instanceof Error ? err.name : 'UnknownError',
+          });
         }
 
         toolResults.push({
@@ -199,10 +206,14 @@ async function executeTool(
 
     case 'send_whatsapp': {
       const text = input['text'] as string;
-      if (ctx.phone) {
-        await sendWhatsAppMessage(ctx.phone, text);
-      }
-      return { success: true, message: 'Сообщение отправлено в WhatsApp' };
+      const delivery = await sendPolicyGatedWhatsAppReply({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        text,
+      });
+      return delivery.accepted
+        ? { success: true, status: delivery.status ?? 'pending' }
+        : { success: false, message: 'Отправка заблокирована политикой диалога' };
     }
 
     default:

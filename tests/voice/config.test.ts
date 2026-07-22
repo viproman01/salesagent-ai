@@ -34,7 +34,33 @@ describe('voice LLM environment configuration', () => {
     assert.equal(parsed.VOICE_LLM_FAST_TIMEOUT_MS, 600);
     assert.equal(parsed.VOICE_LLM_CEREBRAS_FAST_TIMEOUT_MS, 3000);
     assert.equal(parsed.CEREBRAS_API_KEYS, undefined);
+    assert.equal(parsed.TEXT_CHAT_ENABLED, false);
+    assert.equal(parsed.TEXT_CHAT_CEREBRAS_MODEL, 'gemma-4-31b');
+    assert.equal(parsed.TEXT_CHAT_CLASSIFICATION_ENABLED, false);
+    assert.equal(parsed.TEXT_CHAT_GEMINI_MODEL, 'gemini-3.5-flash-lite');
     assert.equal(resolveVoiceFastTimeoutMs(parsed), 600);
+  });
+
+  it('requires Cerebras keys when automatic text chat is enabled', () => {
+    assert.throws(
+      () =>
+        parseConfigEnvironment({
+          ...BASE_ENV,
+          TEXT_CHAT_ENABLED: 'true',
+        }),
+      (error: unknown) =>
+        error instanceof ZodError &&
+        error.issues.some(
+          issue => issue.path.join('.') === 'CEREBRAS_API_KEYS'
+        )
+    );
+
+    const parsed = parseConfigEnvironment({
+      ...BASE_ENV,
+      TEXT_CHAT_ENABLED: 'true',
+      CEREBRAS_API_KEYS: 'text-chat-test-key',
+    });
+    assert.equal(parsed.TEXT_CHAT_ENABLED, true);
   });
 
   it('normalizes and de-duplicates a Cerebras key pool', () => {

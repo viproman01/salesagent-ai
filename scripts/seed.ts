@@ -126,7 +126,7 @@ async function seed() {
     const agentResult = await client.query<{ id: string }>(
       `INSERT INTO agents
          (org_id, name, system_prompt, channels, voice_config, temperature)
-       VALUES ($1, 'Айгуль', $2, ARRAY['whatsapp','telegram','voice'],
+       VALUES ($1, 'Айгуль', $2, ARRAY['whatsapp','telegram','voice','webchat'],
                '{"voice":"Aoede","language":"ru-RU","speed":1.0}'::jsonb, 0.8)
        ON CONFLICT DO NOTHING
        RETURNING id`,

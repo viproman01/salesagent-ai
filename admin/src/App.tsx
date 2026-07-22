@@ -12,6 +12,7 @@ const Knowledge     = lazy(() => import('./pages/Knowledge'));
 const Agents        = lazy(() => import('./pages/Agents'));
 const VoiceTest     = lazy(() => import('./pages/VoiceTest'));
 const Chat          = lazy(() => import('./pages/Chat'));
+const WhatsApp      = lazy(() => import('./pages/WhatsApp'));
 const Login         = lazy(() => import('./pages/Login'));
 
 const Fallback = () => (
@@ -32,6 +33,7 @@ function PrivateLayout() {
       { keys: ['g', 'a'], handler: () => navigate('/agents') },
       { keys: ['g', 'v'], handler: () => navigate('/voice-test') },
       { keys: ['g', 'h'], handler: () => navigate('/chat') },
+      { keys: ['g', 'w'], handler: () => navigate('/whatsapp') },
     ]
   );
 
@@ -51,6 +53,7 @@ function PrivateLayout() {
               <Route path="/agents"        element={<Agents />} />
               <Route path="/voice-test"    element={<VoiceTest />} />
               <Route path="/chat"          element={<Chat />} />
+              <Route path="/whatsapp"      element={<WhatsApp />} />
             </Routes>
           </Suspense>
         </main>

@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { config } from '../config';
 import { searchKnowledge } from '../rag/search';
 import { logger } from '../utils/logger';
+import { sendPolicyGatedWhatsAppReply } from '../whatsapp/safe-outbound';
 
 // ============================================================
 // Определения инструментов (tool use) для Claude
@@ -134,6 +135,7 @@ export interface ToolContext {
   leadId?: string;
   conversationId: string;
   phone?: string;
+  whatsappJid?: string;
 }
 
 export interface SearchKnowledgeInput {
@@ -171,7 +173,11 @@ export async function executeTool(
   toolInput: unknown,
   context: ToolContext
 ): Promise<string> {
-  logger.debug('Выполняю инструмент агента', { toolName, context });
+  logger.debug('Выполняю инструмент агента', {
+    toolName,
+    orgId: context.orgId,
+    conversationId: context.conversationId,
+  });
 
   switch (toolName) {
     case 'search_knowledge':
@@ -271,15 +277,20 @@ async function executeSendWhatsApp(
   input: SendWhatsAppInput,
   context: ToolContext
 ): Promise<string> {
-  const phone = context.phone;
-  if (!phone) return 'Ошибка: нет номера телефона для отправки';
-
   try {
-    const { sendWhatsAppMessage } = await import('../channels/whatsapp');
-    await sendWhatsAppMessage(phone, input.text);
-    return `Сообщение отправлено в WhatsApp на ${phone}`;
-  } catch (err) {
-    logger.error('Ошибка отправки WhatsApp из инструмента', { err, phone });
-    return `Ошибка отправки: ${err instanceof Error ? err.message : String(err)}`;
+    const delivery = await sendPolicyGatedWhatsAppReply({
+      orgId: context.orgId,
+      conversationId: context.conversationId,
+      text: input.text,
+    });
+    return delivery.accepted
+      ? `Сообщение принято безопасной очередью WhatsApp (${delivery.status ?? 'pending'})`
+      : 'Отправка заблокирована политикой WhatsApp-диалога';
+  } catch (error) {
+    logger.error('WhatsApp tool delivery failed', {
+      conversationId: context.conversationId,
+      code: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return 'Сервис отправки WhatsApp временно недоступен';
   }
 }

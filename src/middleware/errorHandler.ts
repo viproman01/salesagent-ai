@@ -21,14 +21,12 @@ export function globalErrorHandler(
   const statusCode = err instanceof AppError ? err.statusCode : 500;
   const isOperational = err instanceof AppError ? err.isOperational : false;
 
-  logger.error({
-    error: err.message,
-    stack: err.stack,
+  logger.error('HTTP request failed', {
+    code: err.name || 'Error',
     path: req.path,
     method: req.method,
     statusCode,
-    isOperational,
-    ip: req.ip
+    isOperational
   });
 
   res.status(statusCode).json({
