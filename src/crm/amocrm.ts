@@ -169,7 +169,7 @@ export class AmoCRMClient {
     // Сохраняем обновлённые токены в БД
     await pool.query(
       `UPDATE crm_connections
-       SET access_token = $1, refresh_token = $2, token_expires_at = $3, updated_at = NOW()
+       SET access_token = $1, refresh_token = $2, token_expires_at = $3, updated_at = CURRENT_TIMESTAMP
        WHERE org_id = $4 AND crm_type = 'amocrm'`,
       [this.accessToken, this.refreshToken, this.tokenExpiresAt, this.orgId]
     );

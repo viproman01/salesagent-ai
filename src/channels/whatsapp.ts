@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { processIncomingMessage } from '../orchestrator/session-manager';
+import { claimWebhookEvent, completeWebhookEvent, failWebhookEvent } from '../integrations/webhook-events';
 
 const WAZZUP_BASE = 'https://api.wazzup24.com/v3';
 
@@ -27,6 +28,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
   const body = req.body as Wazzup24Webhook;
   if (!body.messages) return;
+  const orgId = String(req.params['orgId'] ?? '');
 
   for (const msg of body.messages) {
     if (msg.type !== 'text' || !msg.text) continue;
@@ -34,15 +36,26 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
     const phone = msg.chatId.replace('@c.us', '').replace(/\D/g, '');
     logger.info('WhatsApp message received', { phone, messageId: msg.messageId });
 
-    // Обрабатываем асинхронно — не блокируем webhook
-    processIncomingMessage({
-      channel:    'whatsapp',
-      phone,
-      text:       msg.text,
-      externalId: msg.messageId,
-    }).catch(err => {
+    processWhatsAppMessage(orgId, phone, msg.text, msg.messageId).catch(err => {
       logger.error('WhatsApp processing error', { error: err, phone });
     });
+  }
+}
+
+async function processWhatsAppMessage(orgId: string, phone: string, text: string, eventId: string): Promise<void> {
+  if (!(await claimWebhookEvent('whatsapp', orgId, eventId))) return;
+  try {
+    await processIncomingMessage({
+      channel:    'whatsapp',
+      phone,
+      text,
+      externalId: eventId,
+      orgId,
+    });
+    await completeWebhookEvent('whatsapp', eventId);
+  } catch (error) {
+    await failWebhookEvent('whatsapp', eventId, error);
+    throw error;
   }
 }
 

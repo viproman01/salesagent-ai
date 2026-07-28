@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import api from '../api';
+import { Bot } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
 interface Props { onLogin: () => void }
 
 export default function Login({ onLogin }: Props) {
-  const [email, setEmail] = useState('demo@flowers.kz');
-  const [password, setPassword] = useState('demo1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -15,7 +17,7 @@ export default function Login({ onLogin }: Props) {
     setLoading(true);
     try {
       const { data } = await api.post('/auth/login', { email, password });
-      localStorage.setItem('token', data.token);
+      localStorage.removeItem('token');
       localStorage.setItem('orgId', data.orgId);
       onLogin();
     } catch {
@@ -26,10 +28,13 @@ export default function Login({ onLogin }: Props) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white rounded-2xl shadow-lg p-8 w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center bg-gray-50 p-4">
+      <div className="absolute right-4 top-4"><ThemeToggle compact /></div>
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-lg p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="text-4xl mb-2">🤖</div>
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-500 text-white shadow-md">
+            <Bot size={24} />
+          </div>
           <h1 className="text-2xl font-bold text-gray-900">SalesAgent AI</h1>
           <p className="text-gray-500 text-sm mt-1">Панель управления</p>
         </div>
@@ -38,6 +43,7 @@ export default function Login({ onLogin }: Props) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               type="email" value={email} onChange={e => setEmail(e.target.value)}
+              autoComplete="email"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
               required
             />
@@ -46,6 +52,7 @@ export default function Login({ onLogin }: Props) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
             <input
               type="password" value={password} onChange={e => setPassword(e.target.value)}
+              autoComplete="current-password"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
               required
             />
@@ -58,6 +65,12 @@ export default function Login({ onLogin }: Props) {
             {loading ? 'Вход...' : 'Войти'}
           </button>
         </form>
+        <p className="mt-5 text-center text-sm text-gray-500">
+          Нет аккаунта?{' '}
+          <a href="/register" className="font-medium text-brand-600 hover:text-brand-700">
+            Создать организацию
+          </a>
+        </p>
       </div>
     </div>
   );

@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "deployed_agent_id": "a179a69b-2cd1-4318-9758-2354c8d87fad",
+  "name": "Mommy",
+  "model_text": "cerebras/gemma-4-31b",
+  "channels": [
+    "voice"
+  ],
+  "voice_config": {
+    "version": 2,
+    "provider": "cartesia",
+    "model": "sonic-3.5",
+    "language": "ru-RU",
+    "voiceId": "779673f3-895f-4935-b6b5-b031dc78b319",
+    "speed": 1,
+    "stt": {
+      "provider": "openrouter",
+      "model": "deepgram/nova-3",
+      "language": "ru"
+    },
+    "vad": {
+      "silenceMs": 480,
+      "maxUtteranceSeconds": 30
+    },
+    "orchestration": {
+      "fastModel": "cerebras/gemma-4-31b",
+      "deepModel": "deepseek/deepseek-v4-pro",
+      "complexRouting": true
+    }
+  },
+  "temperature": 0.45,
+  "max_tokens": 120,
+  "is_active": true,
+  "system_prompt": "Ты — Mommy, нежный, внимательный и уверенный голосовой ассистент. Разговаривай естественно, тепло и коротко. Сначала пойми потребность человека, затем помоги выбрать следующий простой шаг. Не выдумывай факты, цены или условия. Если вопрос требует расчёта или глубокого анализа, дай короткий предварительный ответ и продолжай разговор, пока фоновая модель готовит точный вывод."
+}

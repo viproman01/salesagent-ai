@@ -1,88 +1,83 @@
+import { randomUUID } from 'crypto';
 import pool from '../db';
 import { logger } from '../utils/logger';
-import { getCachedEmbedding } from '../utils/cacheEmbeddings';
+import { generateQueryEmbedding } from './embeddings';
+import { config } from '../config';
 
-export interface KnowledgeChunk {
-  id: string;
-  content: string;
-  category: string | null;
-  source_file: string | null;
-  similarity: number;
+export interface KnowledgeChunk { id: string; content: string; category: string | null; source_file: string | null; similarity: number; }
+
+function cosine(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return -1;
+  let dot = 0; let aa = 0; let bb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i]! * b[i]!; aa += a[i]! ** 2; bb += b[i]! ** 2; }
+  return aa && bb ? dot / Math.sqrt(aa * bb) : -1;
 }
 
-/**
- * Поиск по базе знаний через pgvector cosine similarity
- * @param orgId  — ID организации (изоляция данных)
- * @param query  — поисковый запрос
- * @param topK   — количество результатов (по умолчанию 3)
- * @param threshold — минимальный порог сходства (0..1)
- */
-export async function searchKnowledge(
-  orgId: string,
-  query: string,
-  topK = 3,
-  threshold = 0.65
-): Promise<KnowledgeChunk[]> {
-  const embedding = await getCachedEmbedding(query);
-  const embeddingStr = `[${embedding.join(',')}]`;
-
-  const result = await pool.query<KnowledgeChunk>(
-    `SELECT * FROM match_knowledge($1::vector, $2, $3, $4)`,
-    [embeddingStr, topK, orgId, threshold]
+export async function searchKnowledge(orgId: string, query: string, topK = 3, threshold = 0.65): Promise<KnowledgeChunk[]> {
+  const queryEmbedding = await generateQueryEmbedding(query);
+  const result = await pool.query<{ id: string; content: string; category: string | null; source_file: string | null; embedding: number[] | string | null }>(
+    `SELECT id, content, category, source_file, embedding
+     FROM knowledge_chunks
+     WHERE org_id = $1 AND embedding IS NOT NULL
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [orgId, config.RAG_MAX_CANDIDATES]
   );
-
-  logger.debug('Knowledge search', {
-    orgId, query, results: result.rows.length
-  });
-
-  return result.rows;
+  const matches = result.rows.flatMap(row => {
+    const embedding = typeof row.embedding === 'string' ? JSON.parse(row.embedding) as number[] : row.embedding;
+    if (!Array.isArray(embedding)) return [];
+    const similarity = cosine(queryEmbedding, embedding);
+    return similarity >= threshold ? [{ id: row.id, content: row.content, category: row.category, source_file: row.source_file, similarity }] : [];
+  }).sort((a, b) => b.similarity - a.similarity).slice(0, topK);
+  logger.debug('Knowledge search', { orgId, results: matches.length });
+  return matches;
 }
 
-/**
- * Сохранить чанки с embeddings в БД
- */
-export async function saveKnowledgeChunks(
+export async function saveKnowledgeChunks(orgId: string, chunks: Array<{ content: string; embedding: number[]; category?: string; source_file?: string; chunk_index: number; token_count?: number }>): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.beginTransaction();
+    for (const chunk of chunks) await client.query(
+      `INSERT INTO knowledge_chunks (id, org_id, content, embedding, category, source_file, chunk_index, token_count)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [randomUUID(), orgId, chunk.content, JSON.stringify(chunk.embedding), chunk.category ?? null, chunk.source_file ?? null, chunk.chunk_index, chunk.token_count ?? null]
+    );
+    await client.commit();
+  } catch (error) { await client.rollback(); throw error; }
+  finally { client.release(); }
+}
+
+export async function replaceKnowledgeChunks(
   orgId: string,
-  chunks: Array<{
-    content: string;
-    embedding: number[];
-    category?: string;
-    source_file?: string;
-    chunk_index: number;
-    token_count?: number;
-  }>
+  sourceFile: string,
+  chunks: Array<{ content: string; embedding: number[]; category?: string; chunk_index: number; token_count?: number }>
 ): Promise<void> {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.beginTransaction();
+    await client.query(
+      'DELETE FROM knowledge_chunks WHERE org_id = $1 AND source_file = $2',
+      [orgId, sourceFile]
+    );
     for (const chunk of chunks) {
-      const embeddingStr = `[${chunk.embedding.join(',')}]`;
       await client.query(
-        `INSERT INTO knowledge_chunks
-           (org_id, content, embedding, category, source_file, chunk_index, token_count)
-         VALUES ($1, $2, $3::vector, $4, $5, $6, $7)`,
+        `INSERT INTO knowledge_chunks (id, org_id, content, embedding, category, source_file, chunk_index, token_count)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
-          orgId, chunk.content, embeddingStr,
-          chunk.category ?? null, chunk.source_file ?? null,
-          chunk.chunk_index, chunk.token_count ?? null,
+          randomUUID(), orgId, chunk.content, JSON.stringify(chunk.embedding),
+          chunk.category ?? null, sourceFile, chunk.chunk_index, chunk.token_count ?? null,
         ]
       );
     }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
+    await client.commit();
+  } catch (error) {
+    await client.rollback();
+    throw error;
   } finally {
     client.release();
   }
 }
 
-/**
- * Удалить все чанки файла (при повторной загрузке)
- */
 export async function deleteKnowledgeByFile(orgId: string, sourceFile: string): Promise<void> {
-  await pool.query(
-    'DELETE FROM knowledge_chunks WHERE org_id = $1 AND source_file = $2',
-    [orgId, sourceFile]
-  );
+  await pool.query('DELETE FROM knowledge_chunks WHERE org_id = $1 AND source_file = $2', [orgId, sourceFile]);
 }

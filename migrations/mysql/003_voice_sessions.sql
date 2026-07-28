@@ -1,0 +1,40 @@
+CREATE TABLE IF NOT EXISTS voice_sessions (
+  id CHAR(36) PRIMARY KEY,
+  org_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  agent_id CHAR(36) NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'active',
+  stt_model VARCHAR(200) NOT NULL,
+  llm_model VARCHAR(200) NOT NULL,
+  tts_voice_id VARCHAR(255) NULL,
+  language VARCHAR(20) NOT NULL DEFAULT 'ru',
+  utterance_count INT NOT NULL DEFAULT 0,
+  total_audio_ms BIGINT NOT NULL DEFAULT 0,
+  total_cost_usd DECIMAL(14,8) NOT NULL DEFAULT 0,
+  last_error VARCHAR(500) NULL,
+  started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ended_at TIMESTAMP NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_voice_sessions_org FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  CONSTRAINT fk_voice_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_voice_sessions_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+  INDEX idx_voice_sessions_org_started (org_id, started_at),
+  INDEX idx_voice_sessions_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS voice_utterances (
+  id CHAR(36) PRIMARY KEY,
+  session_id CHAR(36) NOT NULL,
+  client_utterance_id VARCHAR(100) NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'processing',
+  audio_ms INT NOT NULL DEFAULT 0,
+  transcript TEXT NULL,
+  assistant_text TEXT NULL,
+  response_json JSON NULL,
+  error_message VARCHAR(500) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP NULL,
+  CONSTRAINT fk_voice_utterances_session FOREIGN KEY (session_id) REFERENCES voice_sessions(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_voice_utterances_client (session_id, client_utterance_id),
+  INDEX idx_voice_utterances_session_created (session_id, created_at)
+);

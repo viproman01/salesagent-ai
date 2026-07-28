@@ -35,12 +35,12 @@ conversationsRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> 
   let paramIndex = 2;
 
   if (channel) {
-    conditions.push(`c.channel = $${paramIndex}::channel_type`);
+    conditions.push(`c.channel = $${paramIndex}`);
     params.push(channel);
     paramIndex++;
   }
   if (status) {
-    conditions.push(`c.status = $${paramIndex}::conversation_status`);
+    conditions.push(`c.status = $${paramIndex}`);
     params.push(status);
     paramIndex++;
   }
@@ -64,8 +64,8 @@ conversationsRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> 
   );
 
   const countResult = await pool.query<{ count: string }>(
-    `SELECT COUNT(*)::text FROM conversations c WHERE ${conditions.slice(0, -2).join(' AND ')}`,
-    params.slice(0, -2)
+    `SELECT COUNT(*) AS count FROM conversations c WHERE ${conditions.join(' AND ')}`,
+    params.slice(0, paramIndex - 1)
   );
 
   res.json({

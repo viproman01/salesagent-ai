@@ -5,18 +5,23 @@
  * Версия: 3.0 (HTTP API + Voximplant ASR/TTS)
  *
  * Поток:
- *   Клиент говорит → VoxEngine ASR → текст → POST /api/voice → Claude AI → текст → VoxEngine TTS → клиент слышит
+ *   Клиент говорит → VoxEngine ASR → текст → POST /api/voice → OpenRouter → Fish Audio MP3 → клиент слышит
  *
  * Преимущества перед WebSocket:
- *   - Работает с любым HTTP хостингом (Vercel, Netlify, Railway...)
+ *   - Работает с любым публичным HTTPS-хостингом
  *   - Не требует постоянного соединения
  *   - Проще в отладке
  */
 
 // ─── Конфигурация ─────────────────────────────────────────────────────────────
-// ЗАМЕНИТЬ: URL вашего Vercel деплоя
-var API_BASE = VoxEngine.customData() || 'https://salesagent-ai.vercel.app';
-// PROD URL: https://salesagent-ai.vercel.app
+// Custom data у правила Voximplant — JSON:
+// {"apiBase":"https://your-domain","agentId":"uuid","voiceSecret":"same-as-VOICE_WEBHOOK_SECRET"}
+// Секрет не храните в репозитории и не логируйте.
+var customData = {};
+try { customData = JSON.parse(VoxEngine.customData() || '{}'); } catch (e) { customData = {}; }
+var API_BASE = customData.apiBase || '';
+var AGENT_ID = customData.agentId || '';
+var VOICE_SECRET = customData.voiceSecret || '';
 var VOICE_API_URL = API_BASE + '/api/voice';
 
 var LANGUAGE     = Language.RU_RUSSIAN_FEMALE;
@@ -46,6 +51,11 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function(e) {
 
 // ─── Звонок принят ────────────────────────────────────────────────────────────
 function onCallConnected() {
+    if (!API_BASE || !AGENT_ID || !VOICE_SECRET) {
+        Logger.write('[SalesAgent] Missing apiBase, agentId or voiceSecret in custom data');
+        call.say('Голосовой сервис пока не настроен. Попробуйте позже.', LANGUAGE);
+        return;
+    }
     Logger.write('[SalesAgent] Call connected, requesting greeting');
     callVoiceAPI('', true);
 }
@@ -59,22 +69,24 @@ function callVoiceAPI(userText, isGreeting) {
     }
 
     var payload = JSON.stringify({
-        session_id:   sessionId,
-        phone:        callerPhone,
-        text:         userText,
-        is_greeting:  isGreeting,
-        history:      history.slice(-12),
+        agent_id:   AGENT_ID,
+        session_id: sessionId,
+        phone:      callerPhone,
+        text:       userText,
+        isGreeting: isGreeting,
+        history:    history.slice(-12),
     });
 
     Logger.write('[SalesAgent] Calling API: ' + (isGreeting ? '[greeting]' : userText));
 
     Net.httpRequestAsync(VOICE_API_URL, {
         method:   'POST',
-        headers:  { 'Content-Type': 'application/json' },
+        headers:  { 'Content-Type': 'application/json', 'X-Voice-Secret': VOICE_SECRET },
         postData: payload,
-        timeout:  8000,
+        timeout:  45000,
     }, function(result) {
         var aiText = 'Извините, произошла ошибка. Попробуйте ещё раз.';
+        var audioUrl = null;
 
         if (result.code === 200) {
             try {
@@ -82,6 +94,7 @@ function callVoiceAPI(userText, isGreeting) {
                 if (parsed.text) {
                     aiText = parsed.text;
                 }
+                if (parsed.audio_url) { audioUrl = parsed.audio_url; }
             } catch(ex) {
                 Logger.write('[SalesAgent] JSON parse error: ' + result.text);
             }
@@ -92,7 +105,7 @@ function callVoiceAPI(userText, isGreeting) {
         history.push({ role: 'assistant', text: aiText });
         Logger.write('[SalesAgent] AI response: ' + aiText);
 
-        speakAndListen(aiText);
+        playAndListen(audioUrl, aiText);
     });
 }
 
@@ -100,6 +113,17 @@ function callVoiceAPI(userText, isGreeting) {
 function speakAndListen(text) {
     call.say(text, LANGUAGE);
     call.addEventListener(CallEvents.PlaybackFinished, startListening);
+}
+
+// Fish Audio возвращает короткоживущий HTTPS MP3 URL. При сбое используем
+// встроенный TTS Voximplant, поэтому звонок не обрывается из-за TTS-провайдера.
+function playAndListen(audioUrl, fallbackText) {
+    if (audioUrl) {
+        call.addEventListener(CallEvents.PlaybackFinished, startListening);
+        call.startPlayback(audioUrl, { progressivePlayback: true });
+    } else {
+        speakAndListen(fallbackText);
+    }
 }
 
 // ─── Слушаем клиента (ASR) ────────────────────────────────────────────────────

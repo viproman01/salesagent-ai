@@ -18,10 +18,9 @@ interface DashboardData {
 }
 
 export default function Dashboard() {
-  const orgId = localStorage.getItem('orgId') ?? '';
-  const { data, isLoading } = useQuery<DashboardData>({
-    queryKey: ['dashboard', orgId],
-    queryFn:  () => api.get(`/dashboard/${orgId}`).then(r => r.data),
+  const { data, isLoading, isError, error, refetch } = useQuery<DashboardData>({
+    queryKey: ['dashboard'],
+    queryFn:  () => api.get('/dashboard').then(r => r.data),
     refetchInterval: 60_000,
   });
 
@@ -29,6 +28,26 @@ export default function Dashboard() {
     return (
       <div className="flex items-center justify-center h-64 text-gray-400">
         Загрузка метрик...
+      </div>
+    );
+  }
+
+  if (isError) {
+    const message = (error as { response?: { data?: { message?: string; error?: string } }; message?: string })
+      .response?.data?.message
+      ?? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+      ?? 'Не удалось получить метрики.';
+    return (
+      <div className="mx-auto mt-12 max-w-xl rounded-2xl border border-red-200 bg-white p-7 text-center shadow-sm">
+        <h1 className="text-lg font-semibold text-gray-900">Дашборд временно недоступен</h1>
+        <p className="mt-2 text-sm text-red-600">{message}</p>
+        <button
+          type="button"
+          onClick={() => void refetch()}
+          className="mt-5 rounded-xl bg-brand-500 px-4 py-2 text-sm font-medium text-white"
+        >
+          Повторить
+        </button>
       </div>
     );
   }
