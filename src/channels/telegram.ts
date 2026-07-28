@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { processIncomingMessage } from '../orchestrator/session-manager';
+import { claimWebhookEvent, completeWebhookEvent, failWebhookEvent } from '../integrations/webhook-events';
 
 const TG_BASE = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN ?? 'NOTSET'}`;
 
@@ -27,6 +28,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
 
   const update = req.body as TelegramUpdate;
   if (!update.message?.text) return;
+  const orgId = String(req.params['orgId'] ?? '');
 
   const msg    = update.message;
   const chatId = String(msg.chat.id);
@@ -34,19 +36,38 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
 
   logger.info('Telegram message received', { chatId, messageId: msg.message_id });
 
-  processIncomingMessage({
-    channel:    'telegram',
-    phone:      chatId, // используем chat_id как идентификатор
-    text,
-    externalId: String(msg.message_id),
-    metadata:   {
-      telegramChatId: chatId,
-      firstName:      msg.from.first_name,
-      username:       msg.from.username,
-    },
-  }).catch(err => {
+  processTelegramMessage(orgId, chatId, text, update).catch(err => {
     logger.error('Telegram processing error', { error: err, chatId });
   });
+}
+
+async function processTelegramMessage(
+  orgId: string,
+  chatId: string,
+  text: string,
+  update: TelegramUpdate
+): Promise<void> {
+  const eventId = String(update.update_id);
+  if (!(await claimWebhookEvent('telegram', orgId, eventId))) return;
+  const message = update.message!;
+  try {
+    await processIncomingMessage({
+      channel: 'telegram',
+      phone: chatId,
+      text,
+      externalId: String(message.message_id),
+      orgId,
+      metadata: {
+        telegramChatId: chatId,
+        firstName: message.from.first_name,
+        username: message.from.username,
+      },
+    });
+    await completeWebhookEvent('telegram', eventId);
+  } catch (error) {
+    await failWebhookEvent('telegram', eventId, error);
+    throw error;
+  }
 }
 
 /**

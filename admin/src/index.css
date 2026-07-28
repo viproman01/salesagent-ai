@@ -3,7 +3,287 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    font-family: "Avenir Next", "Segoe UI Variable", "Segoe UI", sans-serif;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply min-w-[320px] bg-gray-50 text-gray-900 antialiased transition-colors duration-200;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2;
+  }
+
+  button,
+  a,
+  summary {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Compatibility theme for the existing dashboard utility palette. Keeping
+   these mappings centralized makes every current screen dark-mode aware,
+   including charts, tables and third-party widgets. */
+.dark body,
+.dark .bg-gray-50 {
+  background-color: #080c16;
+}
+
+.dark .bg-white {
+  background-color: #111827;
+}
+
+.dark .bg-gray-100 {
+  background-color: #1f2937;
+}
+
+.dark .bg-gray-200 {
+  background-color: #374151;
+}
+
+.dark .bg-gray-300 {
+  background-color: #4b5563;
+}
+
+.dark .text-gray-900 {
+  color: #f8fafc;
+}
+
+.dark .text-gray-800 {
+  color: #e5e7eb;
+}
+
+.dark .text-gray-700 {
+  color: #d1d5db;
+}
+
+.dark .text-gray-600 {
+  color: #b8c1cf;
+}
+
+.dark .text-gray-500 {
+  color: #9ca3af;
+}
+
+.dark .text-gray-400 {
+  color: #7b8798;
+}
+
+.dark .text-gray-300 {
+  color: #64748b;
+}
+
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #263244;
+}
+
+.dark .bg-brand-50 {
+  background-color: #151f42;
+}
+
+.dark .bg-brand-100 {
+  background-color: #1d2c5c;
+}
+
+.dark .text-brand-900 {
+  color: #dce6ff;
+}
+
+.dark .border-brand-200 {
+  border-color: #30478f;
+}
+
+.dark .bg-blue-50,
+.dark .bg-blue-100 {
+  background-color: #10213a;
+}
+
+.dark .bg-violet-50,
+.dark .bg-purple-50 {
+  background-color: #24163d;
+}
+
+.dark .bg-orange-50 {
+  background-color: #351d0f;
+}
+
+.dark .bg-green-50,
+.dark .bg-green-100 {
+  background-color: #0b2d24;
+}
+
+.dark .bg-red-50,
+.dark .bg-red-100 {
+  background-color: #35161c;
+}
+
+.dark .bg-yellow-50,
+.dark .bg-yellow-100 {
+  background-color: #342a0d;
+}
+
+.dark .border-green-200 {
+  border-color: #166044;
+}
+
+.dark .border-red-200 {
+  border-color: #7f2935;
+}
+
+.dark .border-yellow-200 {
+  border-color: #735c16;
+}
+
+.dark .border-blue-200 {
+  border-color: #24558a;
+}
+
+.dark .border-violet-200 {
+  border-color: #61409a;
+}
+
+.dark .border-orange-200 {
+  border-color: #8b4b1f;
+}
+
+.dark .text-green-700 {
+  color: #6ee7b7;
+}
+
+.dark .text-red-700 {
+  color: #fda4af;
+}
+
+.dark .text-yellow-700 {
+  color: #fde68a;
+}
+
+.dark .text-blue-500,
+.dark .text-blue-600,
+.dark .text-blue-700 {
+  color: #93c5fd;
+}
+
+.dark .text-violet-800,
+.dark .text-violet-600,
+.dark .text-purple-600 {
+  color: #c4b5fd;
+}
+
+.dark .text-orange-600,
+.dark .text-orange-800 {
+  color: #fdba74;
+}
+
+.dark .text-red-800,
+.dark .text-red-600 {
+  color: #fda4af;
+}
+
+.dark .text-green-600 {
+  color: #6ee7b7;
+}
+
+.dark .text-yellow-600 {
+  color: #fde68a;
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  border-color: #334155;
+  background-color: #0c1424;
+  color: #f8fafc;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b;
+}
+
+.dark option {
+  background-color: #111827;
+  color: #f8fafc;
+}
+
+.dark .hover\:bg-gray-50:hover {
+  background-color: #182234;
+}
+
+.dark .hover\:bg-brand-50:hover {
+  background-color: #1d2c5c;
+}
+
+.dark .hover\:bg-gray-700:hover,
+.dark .hover\:bg-gray-800:hover {
+  background-color: #273449;
+}
+
+.dark .hover\:text-gray-900:hover {
+  color: #ffffff;
+}
+
+.dark .hover\:text-gray-600:hover,
+.dark .hover\:text-brand-600:hover,
+.dark .hover\:text-brand-700:hover {
+  color: #dce6ff;
+}
+
+.dark button:focus-visible,
+.dark a:focus-visible,
+.dark input:focus-visible,
+.dark select:focus-visible,
+.dark textarea:focus-visible,
+.dark summary:focus-visible {
+  --tw-ring-offset-color: #080c16;
+}
+
+.dark .shadow-sm,
+.dark .shadow-lg,
+.dark .shadow-md {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.22);
+}
+
+.dark .recharts-cartesian-grid line {
+  stroke: #263244;
+}
+
+.dark .recharts-cartesian-axis-tick-value {
+  fill: #94a3b8;
+}
+
+.dark .recharts-default-tooltip {
+  border-color: #334155 !important;
+  background-color: #111827 !important;
+  color: #e5e7eb !important;
+}
+
+* {
+  scrollbar-color: #64748b transparent;
+  scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import api from '../api';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import api, { type Agent } from '../api';
+import { Send, Bot, User, Loader2, AlertCircle } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -8,10 +9,6 @@ interface Message {
   time: string;
 }
 
-/**
- * Веб-чат с AI-агентом Айгуль (без Telegram).
- * Использует тот же Claude Sonnet что и основной агент.
- */
 export default function Chat() {
   const [sessionId] = useState(() => {
     const stored = sessionStorage.getItem('chat_session');
@@ -24,21 +21,31 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      text: 'Здравствуйте! 🌸 Я Айгуль, менеджер цветочного магазина в Алматы. Помогу подобрать букет и оформить доставку. Что ищете?',
+      text: 'Тестовый чат готов. Выберите агента и напишите сообщение клиента.',
       time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
     },
   ]);
   const [input, setInput] = useState('');
+  const [agentId, setAgentId] = useState('');
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const { data: agentsData, isLoading: agentsLoading } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => api.get('/agents').then(response => response.data as { agents: Agent[] }),
+  });
+  const agents = agentsData?.agents.filter(agent => agent.is_active) ?? [];
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  useEffect(() => {
+    if (!agentId && agents[0]) setAgentId(agents[0].id);
+  }, [agentId, agents]);
+
   const send = async () => {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || loading || !agentId) return;
 
     const now = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     setMessages(m => [...m, { role: 'user', text, time: now }]);
@@ -46,7 +53,7 @@ export default function Chat() {
     setLoading(true);
 
     try {
-      const { data } = await api.post('/chat', { message: text, sessionId });
+      const { data } = await api.post('/chat', { agentId, message: text, sessionId });
       setMessages(m => [...m, {
         role: 'assistant',
         text: data.reply,
@@ -71,10 +78,10 @@ export default function Chat() {
   };
 
   const SUGGESTIONS = [
-    'Хочу букет жене на день рождения',
-    'Что есть до 10 000 тенге?',
-    'Какие розы в наличии?',
+    'Расскажите о ваших товарах',
     'Сколько стоит доставка?',
+    'Помогите выбрать подходящий вариант',
+    'Можно записаться на консультацию?',
   ];
 
   return (
@@ -82,8 +89,8 @@ export default function Chat() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Чат с Айгуль</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Тестирование AI-агента в браузере</p>
+          <h1 className="text-xl font-bold text-gray-900">Чат с агентом</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Тот же RAG и инструменты, что в каналах продаж</p>
         </div>
         <button
           onClick={reset}
@@ -91,6 +98,24 @@ export default function Chat() {
         >
           Новый разговор
         </button>
+      </div>
+
+      <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <label className="mb-1 block text-xs font-medium text-gray-600">Активный агент</label>
+        <select
+          value={agentId}
+          onChange={event => setAgentId(event.target.value)}
+          disabled={agentsLoading || loading}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+        >
+          <option value="">Выберите агента</option>
+          {agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name} — {agent.model_text}</option>)}
+        </select>
+        {!agentsLoading && agents.length === 0 ? (
+          <p className="mt-3 flex items-center gap-2 text-sm text-yellow-700">
+            <AlertCircle size={15} /> Сначала <a className="font-semibold underline" href="/agents">создайте активного агента</a>.
+          </p>
+        ) : null}
       </div>
 
       {/* Чат */}
@@ -123,7 +148,7 @@ export default function Chat() {
               </div>
               <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2">
                 <Loader2 size={14} className="animate-spin text-gray-400" />
-                <span className="text-sm text-gray-400">Айгуль печатает...</span>
+                <span className="text-sm text-gray-400">Агент отвечает...</span>
               </div>
             </div>
           )}
@@ -157,12 +182,12 @@ export default function Chat() {
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
               placeholder="Напишите сообщение..."
-              disabled={loading}
+              disabled={loading || !agentId}
               className="flex-1 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-50"
             />
             <button
               onClick={() => void send()}
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || !agentId}
               className="w-11 h-11 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl flex items-center justify-center transition-colors shrink-0"
             >
               <Send size={17} />

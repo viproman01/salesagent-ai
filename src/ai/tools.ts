@@ -1,17 +1,18 @@
-import type { Tool } from '@anthropic-ai/sdk/resources/messages';
-import { Pool } from 'pg';
-import { config } from '../config';
 import { searchKnowledge } from '../rag/search';
 import { logger } from '../utils/logger';
+import pool from '../db';
+import { z } from 'zod';
 
-// ============================================================
-// Определения инструментов (tool use) для Claude
-// 4 основных инструмента для продажного агента
-// ============================================================
+// Tool schemas are retained for backward compatibility and are converted to
+// OpenRouter's OpenAI-compatible function format in ai/openrouter.ts.
 
-const pool = new Pool({ connectionString: config.DATABASE_URL });
+interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
 
-export const AGENT_TOOLS: Tool[] = [
+export const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'search_knowledge',
     description: 'Поиск по базе знаний компании. Используй для поиска информации о продуктах, ценах, условиях доставки, акциях. Всегда ищи перед тем как давать ответ о продуктах.',
@@ -39,7 +40,7 @@ export const AGENT_TOOLS: Tool[] = [
       properties: {
         stage: {
           type: 'string',
-          enum: ['new', 'contacted', 'qualified', 'proposal', 'negotiation', 'won', 'lost'],
+          enum: ['new', 'contacted', 'interested', 'objection', 'negotiation', 'meeting_booked', 'closed_won', 'closed_lost', 'nurturing'],
           description: 'Новый этап воронки продаж',
         },
         name: {
@@ -120,15 +121,6 @@ export const AGENT_TOOLS: Tool[] = [
   },
 ];
 
-// Описания инструментов для Gemini Live (другой формат)
-export const GEMINI_TOOL_DECLARATIONS = {
-  functionDeclarations: AGENT_TOOLS.map(tool => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.input_schema,
-  })),
-};
-
 export interface ToolContext {
   orgId: string;
   leadId?: string;
@@ -163,6 +155,26 @@ export interface SendWhatsAppInput {
   media_url?: string;
 }
 
+const toolInputSchemas = {
+  search_knowledge: z.object({ query: z.string().min(1).max(1000), category: z.string().max(100).optional() }),
+  update_lead: z.object({
+    stage: z.enum(['new', 'contacted', 'interested', 'objection', 'negotiation', 'meeting_booked', 'closed_won', 'closed_lost', 'nurturing']).optional(),
+    name: z.string().max(255).optional(),
+    email: z.string().email().max(255).optional(),
+    score: z.number().min(0).max(100).optional(),
+    deal_amount: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    notes: z.string().max(5000).optional(),
+    tags: z.array(z.string().max(100)).max(50).optional(),
+  }),
+  book_meeting: z.object({
+    title: z.string().min(1).max(255),
+    datetime_utc: z.string().datetime(),
+    duration_minutes: z.number().int().min(5).max(1440).optional(),
+    notes: z.string().max(5000).optional(),
+  }),
+  send_whatsapp: z.object({ text: z.string().min(1).max(4000), media_url: z.string().url().optional() }),
+};
+
 /**
  * Диспетчер исполнения инструментов — вызывается из цикла tool use Claude
  */
@@ -174,17 +186,29 @@ export async function executeTool(
   logger.debug('Выполняю инструмент агента', { toolName, context });
 
   switch (toolName) {
-    case 'search_knowledge':
-      return executeSearchKnowledge(toolInput as SearchKnowledgeInput, context);
+    case 'search_knowledge': {
+      const parsed = toolInputSchemas.search_knowledge.safeParse(toolInput);
+      if (!parsed.success) return `Ошибка аргументов search_knowledge: ${parsed.error.message}`;
+      return executeSearchKnowledge(parsed.data, context);
+    }
 
-    case 'update_lead':
-      return executeUpdateLead(toolInput as UpdateLeadInput, context);
+    case 'update_lead': {
+      const parsed = toolInputSchemas.update_lead.safeParse(toolInput);
+      if (!parsed.success) return `Ошибка аргументов update_lead: ${parsed.error.message}`;
+      return executeUpdateLead(parsed.data, context);
+    }
 
-    case 'book_meeting':
-      return executeBookMeeting(toolInput as BookMeetingInput, context);
+    case 'book_meeting': {
+      const parsed = toolInputSchemas.book_meeting.safeParse(toolInput);
+      if (!parsed.success) return `Ошибка аргументов book_meeting: ${parsed.error.message}`;
+      return executeBookMeeting(parsed.data, context);
+    }
 
-    case 'send_whatsapp':
-      return executeSendWhatsApp(toolInput as SendWhatsAppInput, context);
+    case 'send_whatsapp': {
+      const parsed = toolInputSchemas.send_whatsapp.safeParse(toolInput);
+      if (!parsed.success) return `Ошибка аргументов send_whatsapp: ${parsed.error.message}`;
+      return executeSendWhatsApp(parsed.data, context);
+    }
 
     default:
       logger.warn('Неизвестный инструмент', { toolName });
@@ -219,11 +243,11 @@ async function executeUpdateLead(
   if (input.score !== undefined)       { setParts.push(`score = $${idx++}`);        values.push(input.score); }
   if (input.deal_amount !== undefined) { setParts.push(`deal_amount = $${idx++}`);  values.push(input.deal_amount); }
   if (input.notes !== undefined)       { setParts.push(`notes = $${idx++}`);        values.push(input.notes); }
-  if (input.tags !== undefined)        { setParts.push(`tags = $${idx++}`);         values.push(input.tags); }
+  if (input.tags !== undefined)        { setParts.push(`tags = $${idx++}`);         values.push(JSON.stringify(input.tags)); }
 
   if (setParts.length === 0) return 'Нет данных для обновления';
 
-  setParts.push(`updated_at = NOW()`);
+  setParts.push(`updated_at = CURRENT_TIMESTAMP`);
   values.push(context.leadId);
 
   await pool.query(
@@ -242,13 +266,13 @@ async function executeBookMeeting(
   if (!context.leadId) return 'Ошибка: lead_id не задан';
 
   await pool.query(
-    `UPDATE leads SET next_contact_at = $1::timestamptz, updated_at = NOW() WHERE id = $2`,
+    `UPDATE leads SET next_contact_at = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
     [input.datetime_utc, context.leadId]
   );
 
   await pool.query(
     `UPDATE conversations
-     SET metadata = jsonb_set(metadata, '{meeting}', $1::jsonb), updated_at = NOW()
+     SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()), '$.meeting', JSON_EXTRACT($1, '$')), updated_at = CURRENT_TIMESTAMP
      WHERE id = $2`,
     [JSON.stringify({
       title: input.title,

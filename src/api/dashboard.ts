@@ -4,12 +4,10 @@ import pool from '../db';
 
 export const dashboardRouter = Router();
 
-// GET /api/v1/dashboard/:orgId — метрики для дашборда
-dashboardRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> => {
+async function sendDashboard(req: import('express').Request, res: import('express').Response, requestedOrgId?: string): Promise<void> {
   const user = (req as typeof req & { user: JwtPayload }).user;
-  const orgId = req.params['orgId']!;
+  const orgId = requestedOrgId ?? user.orgId;
 
-  // Проверяем доступ к организации
   if (user.orgId !== orgId && user.role !== 'superadmin') {
     res.status(403).json({ error: 'Access denied' });
     return;
@@ -27,35 +25,35 @@ dashboardRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> => {
   ] = await Promise.all([
     // Всего разговоров за 30 дней
     pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text FROM conversations
-       WHERE org_id = $1 AND created_at > NOW() - INTERVAL '30 days'`,
+      `SELECT COUNT(*) AS count FROM conversations
+       WHERE org_id = $1 AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)`,
       [orgId]
     ),
     // Всего лидов
     pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text FROM leads WHERE org_id = $1`,
+      `SELECT COUNT(*) AS count FROM leads WHERE org_id = $1`,
       [orgId]
     ),
     // Конверсия (closed_won / total_leads * 100)
     pool.query<{ total: string; won: string }>(
       `SELECT
-         COUNT(*)::text AS total,
-         COUNT(*) FILTER (WHERE stage = 'closed_won')::text AS won
+         COUNT(*) AS total,
+         SUM(stage = 'closed_won') AS won
        FROM leads WHERE org_id = $1`,
       [orgId]
     ),
     // Среднее время ответа (мс)
     pool.query<{ avg_latency: string }>(
-      `SELECT AVG(m.latency_ms)::text AS avg_latency
+      `SELECT AVG(m.latency_ms) AS avg_latency
        FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
        WHERE c.org_id = $1 AND m.role = 'assistant' AND m.latency_ms IS NOT NULL
-         AND m.created_at > NOW() - INTERVAL '30 days'`,
+         AND m.created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)`,
       [orgId]
     ),
     // Воронка по этапам
     pool.query<{ stage: string; count: string }>(
-      `SELECT stage, COUNT(*)::text
+      `SELECT stage, COUNT(*) AS count
        FROM leads WHERE org_id = $1
        GROUP BY stage ORDER BY COUNT(*) DESC`,
       [orgId]
@@ -63,10 +61,10 @@ dashboardRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> => {
     // Тренд за 30 дней (разговоры по дням)
     pool.query<{ date: string; conversations: string; leads: string }>(
       `SELECT
-         DATE(created_at)::text AS date,
-         COUNT(*)::text AS conversations
+         DATE(created_at) AS date,
+         COUNT(*) AS conversations
        FROM conversations
-       WHERE org_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+       WHERE org_id = $1 AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)
        GROUP BY DATE(created_at)
        ORDER BY date`,
       [orgId]
@@ -94,4 +92,16 @@ dashboardRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> => {
     trend:        trendResult.rows,
     subscription: subscriptionResult.rows[0] ?? null,
   });
+}
+
+// Preferred endpoint: organization comes from the authenticated session.
+dashboardRouter.get('/', requireAuth, async (req, res): Promise<void> => {
+  await sendDashboard(req, res);
+});
+
+// Compatibility endpoint for old admin bundles.
+dashboardRouter.get('/:orgId', requireAuth, async (req, res): Promise<void> => {
+  const value = req.params['orgId'];
+  const orgId = Array.isArray(value) ? value[0] : value;
+  await sendDashboard(req, res, orgId);
 });

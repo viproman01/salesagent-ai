@@ -1,23 +1,38 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { config } from '../config';
 import { logger } from '../utils/logger';
 import pool from '../db';
 import { updateLeadStage } from '../crm/adapter';
+import { chatCompletion } from '../ai/chat-provider';
+import { config } from '../config';
+import { z } from 'zod';
 
-const anthropic = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+const classificationSchema = z.object({
+  stage: z.enum([
+    'new',
+    'contacted',
+    'interested',
+    'objection',
+    'negotiation',
+    'meeting_booked',
+    'closed_won',
+    'closed_lost',
+    'nurturing',
+  ]),
+  confidence: z.coerce.number().min(0).max(1),
+  sentiment: z.enum(['positive', 'neutral', 'negative']),
+  key_signals: z.array(z.string()).max(10).default([]),
+  objections: z.array(z.string()).max(10).default([]),
+  next_action: z.string().default(''),
+  summary: z.string().min(1),
+});
 
-interface Classification {
-  stage:        string;
-  confidence:   number;
-  sentiment:    'positive' | 'neutral' | 'negative';
-  key_signals:  string[];
-  objections:   string[];
-  next_action:  string;
-  summary:      string;
-}
+export type Classification = z.infer<typeof classificationSchema>;
+
+const CLASSIFICATION_DELAY_MS = 20_000;
+const pendingClassifications = new Map<string, NodeJS.Timeout>();
 
 const CLASSIFIER_SYSTEM_PROMPT = `Ты — классификатор этапов воронки продаж.
-Проанализируй диалог менеджера с клиентом и верни ТОЛЬКО валидный JSON без пояснений.
+Проанализируй диалог менеджера с клиентом и верни ТОЛЬКО один короткий валидный JSON.
+Не показывай рассуждения, Markdown и блоки кода. Массивы содержат не более 3 коротких элементов.
 
 Формат ответа:
 {
@@ -32,22 +47,94 @@ const CLASSIFIER_SYSTEM_PROMPT = `Ты — классификатор этапо
 
 /**
  * Запустить пост-диалоговую классификацию.
- * Вызывается async после каждого обмена сообщениями.
- * Использует Claude Haiku (быстрее и дешевле).
+ * Последовательно переносит запуск на 20 секунд после последней реплики.
+ * Благодаря trailing debounce живой разговор не создаёт параллельную серию
+ * классификаций и не расходует квоту на каждую короткую реплику.
  */
 export async function scheduleClassification(
   conversationId: string,
   orgId: string,
   leadId: string
 ): Promise<void> {
-  // Небольшая задержка — даём диалогу устояться
-  await new Promise(r => setTimeout(r, 2000));
+  const previous = pendingClassifications.get(conversationId);
+  if (previous) clearTimeout(previous);
 
-  try {
-    await classifyConversation(conversationId, orgId, leadId);
-  } catch (err) {
-    logger.error('Classifier error', { error: err, conversationId });
+  const timer = setTimeout(() => {
+    pendingClassifications.delete(conversationId);
+    void classifyConversation(conversationId, orgId, leadId).catch(err => {
+      logger.warn('Classifier request failed', {
+        error: err instanceof Error ? err.message : String(err),
+        conversationId,
+      });
+    });
+  }, CLASSIFICATION_DELAY_MS);
+  timer.unref();
+  pendingClassifications.set(conversationId, timer);
+}
+
+function balancedJsonObjects(text: string): string[] {
+  const objects: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (char === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, index + 1));
+        start = -1;
+      }
+    }
   }
+  return objects;
+}
+
+export function parseClassifierResponse(rawText: string): Classification | null {
+  const candidates = [
+    rawText.trim(),
+    ...balancedJsonObjects(rawText),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const parsed = classificationSchema.safeParse(JSON.parse(candidate));
+      if (parsed.success) return parsed.data;
+    } catch {
+      // Try the next complete JSON object found in the response.
+    }
+  }
+  return null;
+}
+
+async function requestClassification(dialogText: string, retry: boolean): Promise<string> {
+  const model = config.CEREBRAS_API_KEYS.length > 0
+    ? `cerebras/${config.CEREBRAS_DEFAULT_MODEL}`
+    : config.OPENROUTER_DEFAULT_MODEL;
+  const response = await chatCompletion(model, [
+    {
+      role: 'system',
+      content: retry
+        ? `${CLASSIFIER_SYSTEM_PROMPT}\nПредыдущая попытка была невалидной. Начни ответ с { и закончи }.`
+        : CLASSIFIER_SYSTEM_PROMPT,
+    },
+    { role: 'user', content: `Диалог:\n${dialogText}` },
+  ], { temperature: 0, maxTokens: 512, tools: false });
+  return response.text;
 }
 
 async function classifyConversation(
@@ -72,40 +159,27 @@ async function classifyConversation(
     .map(m => `${m.role === 'user' ? 'Клиент' : 'Менеджер'}: ${m.content}`)
     .join('\n');
 
-  // Вызываем Claude Haiku для классификации
-  const response = await anthropic.messages.create({
-    model:      'claude-haiku-4-5-20251001',
-    max_tokens: 512,
-    system:     CLASSIFIER_SYSTEM_PROMPT,
-    messages: [{
-      role:    'user',
-      content: `Проанализируй следующий диалог:\n\n${dialogText}`,
-    }],
-  });
-
-  const rawText = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map(b => b.text)
-    .join('');
-
-  let classification: Classification;
-  try {
-    // Извлекаем JSON из ответа
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in classifier response');
-    classification = JSON.parse(jsonMatch[0]) as Classification;
-  } catch (err) {
-    logger.error('Classifier JSON parse error', { error: err, rawText });
+  let rawText = await requestClassification(dialogText, false);
+  let classification = parseClassifierResponse(rawText);
+  if (!classification) {
+    rawText = await requestClassification(dialogText, true);
+    classification = parseClassifierResponse(rawText);
+  }
+  if (!classification) {
+    logger.warn('Classifier returned invalid structured output', {
+      conversationId,
+      preview: rawText.replace(/\s+/g, ' ').slice(0, 240),
+    });
     return;
   }
 
   // Сохраняем классификацию в разговоре
   await pool.query(
     `UPDATE conversations
-     SET classification = $1::jsonb,
+     SET classification = $1,
          summary        = $2,
          sentiment      = $3,
-         updated_at     = NOW()
+         updated_at     = CURRENT_TIMESTAMP
      WHERE id = $4`,
     [
       JSON.stringify(classification),

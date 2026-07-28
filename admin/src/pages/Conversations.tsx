@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../api';
 import type { Conversation } from '../api';
 import ConversationView from '../components/ConversationView';
-import { MessageSquare, Mic, Send } from 'lucide-react';
+import { MessageSquare, MessagesSquare, Mic, Send } from 'lucide-react';
 
 const CHANNEL_ICONS: Record<string, React.ReactNode> = {
   whatsapp: <Send size={14} className="text-green-500" />,
   telegram: <MessageSquare size={14} className="text-blue-500" />,
   voice:    <Mic size={14} className="text-purple-500" />,
+  chat:     <MessagesSquare size={14} className="text-brand-500" />,
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -55,6 +56,7 @@ export default function Conversations() {
               <option value="whatsapp">WhatsApp</option>
               <option value="telegram">Telegram</option>
               <option value="voice">Голос</option>
+              <option value="chat">Веб-чат</option>
             </select>
             <select
               value={status} onChange={e => setStatus(e.target.value)}

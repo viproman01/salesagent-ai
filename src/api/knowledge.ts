@@ -4,7 +4,7 @@ import { requireAuth, type JwtPayload } from './auth';
 import { logger } from '../utils/logger';
 import { chunkText, extractPdfText, extractCsvText } from '../rag/chunker';
 import { generateEmbeddingsBatch } from '../rag/embeddings';
-import { saveKnowledgeChunks, deleteKnowledgeByFile, searchKnowledge } from '../rag/search';
+import { replaceKnowledgeChunks, deleteKnowledgeByFile, searchKnowledge } from '../rag/search';
 import pool from '../db';
 
 export const knowledgeRouter = Router();
@@ -56,20 +56,17 @@ knowledgeRouter.post('/upload', requireAuth, upload.single('file'), async (req, 
   const chunks = chunkText(text);
   logger.info('Text chunked', { orgId: user.orgId, chunks: chunks.length });
 
-  // Удаляем старые чанки для этого файла
-  await deleteKnowledgeByFile(user.orgId, originalname);
-
   // Генерируем embeddings пакетами
   const embeddings = await generateEmbeddingsBatch(chunks.map(c => c.content));
 
-  // Сохраняем в БД
-  await saveKnowledgeChunks(
+  // Атомарно заменяем старую версию только после успешных embeddings.
+  await replaceKnowledgeChunks(
     user.orgId,
+    originalname,
     chunks.map((chunk, i) => ({
       content:     chunk.content,
       embedding:   embeddings[i]!,
       category,
-      source_file: originalname,
       chunk_index: chunk.index,
       token_count: chunk.tokenEstimate,
     }))
@@ -108,8 +105,8 @@ knowledgeRouter.get('/', requireAuth, async (req, res): Promise<void> => {
     `SELECT
        source_file,
        category,
-       COUNT(*)::int AS chunk_count,
-       SUM(token_count)::int AS total_tokens,
+       COUNT(*) AS chunk_count,
+       SUM(token_count) AS total_tokens,
        MAX(created_at) AS uploaded_at
      FROM knowledge_chunks
      WHERE org_id = $1

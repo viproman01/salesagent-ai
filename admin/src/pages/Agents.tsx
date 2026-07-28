@@ -9,6 +9,61 @@ const DEFAULT_PROMPT = `Ты — AI-ассистент по продажам. Т
 Когда клиент готов купить — вызови update_lead(stage='negotiation').`;
 
 const CHANNELS = ['whatsapp', 'telegram', 'voice'] as const;
+type TextProvider = 'openrouter' | 'cerebras';
+
+interface CatalogModel {
+  id: string;
+  name: string;
+  supportsTools: boolean;
+  recommended: boolean;
+}
+
+interface ProviderCatalog {
+  id: TextProvider;
+  name: string;
+  configured: boolean;
+  keyCount: number;
+  models: CatalogModel[];
+  catalogAvailable: boolean;
+}
+
+const CEREBRAS_FALLBACK_MODELS: CatalogModel[] = [
+  { id: 'gemma-4-31b', name: 'Gemma 4 31B', supportsTools: true, recommended: true },
+  { id: 'gpt-oss-120b', name: 'GPT OSS 120B', supportsTools: true, recommended: false },
+  { id: 'zai-glm-4.7', name: 'Z.ai GLM 4.7', supportsTools: true, recommended: false },
+];
+const CARTESIA_MOMMY_VOICE_ID = '779673f3-895f-4935-b6b5-b031dc78b319';
+const FISH_MOMMY_VOICE_ID = '3cea70d91116442f8086820844db233c';
+
+function parseModelReference(reference?: string): { provider: TextProvider; model: string } {
+  const value = reference?.trim() || 'openrouter/auto';
+  if (value.startsWith('cerebras/') && value.length > 'cerebras/'.length) {
+    return { provider: 'cerebras', model: value.slice('cerebras/'.length) };
+  }
+  return { provider: 'openrouter', model: value };
+}
+
+function formatModelReference(provider: TextProvider, model: string): string {
+  return provider === 'cerebras' ? `cerebras/${model}` : model;
+}
+
+function defaultVoiceConfig(): Agent['voice_config'] {
+  return {
+    version: 2,
+    provider: 'cartesia',
+    model: 'sonic-3.5',
+    voiceId: CARTESIA_MOMMY_VOICE_ID,
+    language: 'ru-RU',
+    speed: 1.08,
+    stt: { provider: 'openrouter', model: 'deepgram/nova-3', language: 'ru' },
+    vad: { silenceMs: 480, maxUtteranceSeconds: 30 },
+    orchestration: {
+      fastModel: 'cerebras/gemma-4-31b',
+      deepModel: 'deepseek/deepseek-v4-pro',
+      complexRouting: true,
+    },
+  };
+}
 
 export default function Agents() {
   const qc = useQueryClient();
@@ -16,6 +71,7 @@ export default function Agents() {
   const [creating, setCreating] = useState(false);
   const [form, setForm]       = useState<Partial<Agent>>({
     name: '', system_prompt: DEFAULT_PROMPT, channels: ['whatsapp'], temperature: 0.7, max_tokens: 1024,
+    model_text: 'openrouter/auto', voice_config: defaultVoiceConfig(),
   });
   const [saving, setSaving]   = useState(false);
   const [testInput, setTestInput] = useState('');
@@ -26,18 +82,65 @@ export default function Agents() {
     queryKey: ['agents'],
     queryFn:  () => api.get('/agents').then(r => r.data as { agents: Agent[] }),
   });
+  const { data: catalogs, isLoading: catalogsLoading } = useQuery({
+    queryKey: ['provider-models'],
+    queryFn: () => api.get('/providers/models').then(
+      response => response.data as { providers: ProviderCatalog[] }
+    ),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const { data: fishVoices } = useQuery({
+    queryKey: ['fish-voices'],
+    queryFn: () => api.get('/providers/fish/voices').then(
+      response => response.data as {
+        voices: Array<{ id: string; name: string; languages: string[] }>;
+      }
+    ),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const { data: cartesiaVoices } = useQuery({
+    queryKey: ['cartesia-voices'],
+    queryFn: () => api.get('/providers/cartesia/voices').then(
+      response => response.data as {
+        voices: Array<{
+          id: string;
+          name: string;
+          language: string;
+          gender: 'masculine' | 'feminine' | 'gender_neutral' | null;
+        }>;
+        model: string;
+        catalogAvailable: boolean;
+      }
+    ),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
 
   const openEdit = (agent: Agent) => {
     setEditId(agent.id);
     setCreating(false);
-    setForm(agent);
+    setForm({
+      ...agent,
+      voice_config: {
+        ...defaultVoiceConfig(),
+        ...agent.voice_config,
+        stt: { ...defaultVoiceConfig().stt!, ...agent.voice_config?.stt },
+        vad: { ...defaultVoiceConfig().vad!, ...agent.voice_config?.vad },
+        orchestration: {
+          ...defaultVoiceConfig().orchestration!,
+          ...agent.voice_config?.orchestration,
+        },
+      },
+    });
     setTestOutput('');
   };
 
   const openCreate = () => {
     setEditId(null);
     setCreating(true);
-    setForm({ name: '', system_prompt: DEFAULT_PROMPT, channels: ['whatsapp'], temperature: 0.7, max_tokens: 1024 });
+    setForm({ name: '', system_prompt: DEFAULT_PROMPT, channels: ['whatsapp'], temperature: 0.7, max_tokens: 1024, model_text: 'openrouter/auto', voice_config: defaultVoiceConfig() });
   };
 
   const save = async () => {
@@ -68,16 +171,16 @@ export default function Agents() {
     setTesting(true);
     setTestOutput('');
     try {
-      // Простой тест через knowledge search
-      const resp = await api.get('/knowledge/search', { params: { q: testInput } });
-      const results = (resp.data as { results: Array<{content:string}> }).results;
-      if (results.length > 0) {
-        setTestOutput(`Найдено в базе знаний:\n\n${results.map(r => r.content).join('\n\n---\n\n')}`);
-      } else {
-        setTestOutput('Ничего не найдено в базе знаний по этому запросу.');
-      }
-    } catch {
-      setTestOutput('Ошибка теста');
+      const resp = await api.post('/chat', {
+        agentId: editId,
+        message: testInput.trim(),
+        sessionId: `agent-test-${Date.now()}`,
+      });
+      const result = resp.data as { reply: string; toolsUsed: string[] };
+      setTestOutput(`${result.reply}\n\nИнструменты: ${result.toolsUsed.join(', ') || 'не использовались'}`);
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { error?: string } } }).response?.data?.error;
+      setTestOutput(`Ошибка теста: ${message ?? 'запрос не выполнен'}`);
     } finally {
       setTesting(false);
     }
@@ -93,6 +196,21 @@ export default function Agents() {
   };
 
   const isEditing = creating || !!editId;
+  const modelSelection = parseModelReference(form.model_text);
+  const selectedCatalog = catalogs?.providers.find(item => item.id === modelSelection.provider);
+  const availableModels = modelSelection.provider === 'cerebras'
+    ? selectedCatalog?.models.length ? selectedCatalog.models : CEREBRAS_FALLBACK_MODELS
+    : selectedCatalog?.models ?? [];
+  const ttsProvider = form.voice_config?.provider ?? 'cartesia';
+  const ttsVoices = ttsProvider === 'cartesia'
+    ? (cartesiaVoices?.voices ?? []).map(voice => ({
+        id: voice.id,
+        label: `${voice.name} · ru${voice.gender === 'feminine' ? ' · женский' : voice.gender === 'masculine' ? ' · мужской' : ''}`,
+      }))
+    : (fishVoices?.voices ?? []).map(voice => ({
+        id: voice.id,
+        label: `${voice.name} · ${voice.languages.join(', ') || 'язык не указан'}`,
+      }));
 
   return (
     <div className="flex gap-4 h-[calc(100vh-6rem)]">
@@ -161,6 +279,168 @@ export default function Agents() {
 
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">AI-провайдер и модель</label>
+                <div className="grid grid-cols-[132px_1fr] gap-2">
+                  <select
+                    value={modelSelection.provider}
+                    onChange={event => {
+                      const provider = event.target.value as TextProvider;
+                      const model = provider === 'cerebras' ? 'gemma-4-31b' : 'openrouter/auto';
+                      setForm(current => ({ ...current, model_text: formatModelReference(provider, model) }));
+                    }}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="cerebras">Cerebras</option>
+                    <option value="openrouter">OpenRouter</option>
+                  </select>
+                  <input
+                    list={`models-${modelSelection.provider}`}
+                    value={modelSelection.model}
+                    onChange={event => setForm(current => ({
+                      ...current,
+                      model_text: formatModelReference(modelSelection.provider, event.target.value),
+                    }))}
+                    className="min-w-0 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder={modelSelection.provider === 'cerebras' ? 'gemma-4-31b' : 'provider/model-id'}
+                  />
+                  <datalist id={`models-${modelSelection.provider}`}>
+                    {availableModels.map(model => (
+                      <option
+                        key={model.id}
+                        value={model.id}
+                        label={`${model.recommended ? '★ ' : ''}${model.name}${model.supportsTools ? ' · tools' : ''}`}
+                      />
+                    ))}
+                  </datalist>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  {catalogsLoading
+                    ? 'Загружаем доступные модели…'
+                    : selectedCatalog?.configured
+                      ? `${selectedCatalog.name}: подключено ключей — ${selectedCatalog.keyCount}. Начните вводить ID для поиска.`
+                      : `${modelSelection.provider === 'cerebras' ? 'CEREBRAS_API_KEYS' : 'OPENROUTER_API_KEY'} не подключён на сервере.`}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Провайдер TTS</label>
+                <select
+                  value={ttsProvider}
+                  onChange={event => {
+                    const provider = event.target.value as 'cartesia' | 'fish';
+                    setForm(current => ({
+                      ...current,
+                      voice_config: {
+                        ...defaultVoiceConfig(),
+                        ...current.voice_config,
+                        provider,
+                        model: provider === 'cartesia' ? 'sonic-3.5' : 's2.1-pro-free',
+                        voiceId: provider === 'cartesia'
+                          ? CARTESIA_MOMMY_VOICE_ID
+                          : FISH_MOMMY_VOICE_ID,
+                      },
+                    }));
+                  }}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="cartesia">Cartesia · Sonic 3.5 · streaming</option>
+                  <option value="fish">Fish Audio · S2.1 Pro Free · fallback</option>
+                </select>
+                <label className="mt-3 block text-xs font-medium text-gray-600 mb-1">
+                  {ttsProvider === 'cartesia' ? 'Русский голос Cartesia' : 'Голос Fish Audio'}
+                </label>
+                <input
+                  list={`tts-agent-voices-${ttsProvider}`}
+                  value={form.voice_config?.voiceId ?? ''}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    voice_config: {
+                      ...defaultVoiceConfig(),
+                      ...current.voice_config,
+                      voiceId: event.target.value || undefined,
+                    },
+                  }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder={ttsProvider === 'cartesia' ? 'Cartesia voice UUID' : 'Fish Audio reference ID'}
+                />
+                <datalist id={`tts-agent-voices-${ttsProvider}`}>
+                  {ttsVoices.map(voice => (
+                    <option key={voice.id} value={voice.id}>{voice.label}</option>
+                  ))}
+                </datalist>
+                <p className="text-xs text-gray-400 mt-1">
+                  {ttsProvider === 'cartesia'
+                    ? 'Sonic 3.5 отдаёт MP3 потоком; при сбое автоматически используется Fish Audio.'
+                    : 'Fish Audio остаётся доступным как основной провайдер или автоматический резерв.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">STT через OpenRouter</label>
+                <input
+                  value={form.voice_config?.stt?.model ?? 'deepgram/nova-3'}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    voice_config: {
+                      ...defaultVoiceConfig(),
+                      ...current.voice_config,
+                      stt: {
+                        provider: 'openrouter',
+                        language: current.voice_config?.stt?.language ?? 'ru',
+                        model: event.target.value,
+                      },
+                    },
+                  }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 font-mono text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Пауза для конца реплики, мс</label>
+                <input
+                  type="number"
+                  min={400}
+                  max={5000}
+                  value={form.voice_config?.vad?.silenceMs ?? 1200}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    voice_config: {
+                      ...defaultVoiceConfig(),
+                      ...current.voice_config,
+                      vad: {
+                        maxUtteranceSeconds: current.voice_config?.vad?.maxUtteranceSeconds ?? 30,
+                        silenceMs: Number(event.target.value),
+                      },
+                    },
+                  }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Макс. реплика, секунд</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={form.voice_config?.vad?.maxUtteranceSeconds ?? 30}
+                  onChange={event => setForm(current => ({
+                    ...current,
+                    voice_config: {
+                      ...defaultVoiceConfig(),
+                      ...current.voice_config,
+                      vad: {
+                        silenceMs: current.voice_config?.vad?.silenceMs ?? 1200,
+                        maxUtteranceSeconds: Number(event.target.value),
+                      },
+                    },
+                  }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Имя агента</label>
                 <input
                   value={form.name ?? ''} onChange={e => setForm(f => ({...f, name: e.target.value}))}
@@ -222,12 +502,12 @@ export default function Agents() {
 
           {/* Тест-панель */}
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <h3 className="font-semibold text-gray-900 mb-3">Тест базы знаний</h3>
+            <h3 className="font-semibold text-gray-900 mb-3">Тест агента</h3>
             <div className="flex gap-2">
               <input
                 value={testInput} onChange={e => setTestInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && void testAgent()}
-                placeholder="Спросить что-то из базы знаний..."
+                placeholder="Отправить реальную тестовую реплику агенту..."
                 className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               <button

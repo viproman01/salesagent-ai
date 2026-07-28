@@ -8,6 +8,7 @@ const API_BASE = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.
 const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,
 });
 
 // Добавляем JWT токен к каждому запросу
@@ -21,7 +22,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err.response?.status === 401) {
+    const requestUrl = String(err.config?.url ?? '');
+    const authProbe = requestUrl.includes('/auth/me')
+      || requestUrl.includes('/auth/login')
+      || requestUrl.includes('/auth/register');
+    if (err.response?.status === 401 && !authProbe) {
       localStorage.removeItem('token');
       window.location.href = '/login';
     }
@@ -88,7 +93,22 @@ export interface Agent {
   name:          string;
   system_prompt: string;
   channels:      string[];
-  voice_config:  { voice: string; language: string; speed: number };
+  voice_config:  {
+    version?: 2;
+    provider: 'fish' | 'cartesia';
+    model?: string;
+    voiceId?: string;
+    language: string;
+    speed: number;
+    stt?: { provider: 'openrouter'; model: string; language: string };
+    vad?: { silenceMs: number; maxUtteranceSeconds: number };
+    orchestration?: {
+      fastModel: string;
+      deepModel: string;
+      complexRouting: boolean;
+    };
+  };
+  model_text:    string;
   temperature:   number;
   max_tokens:    number;
   is_active:     boolean;

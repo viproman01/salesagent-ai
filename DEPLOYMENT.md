@@ -1,222 +1,254 @@
-# SalesAgent AI - Deployment Guide
+# Развёртывание SalesAgent AI
 
-## GitHub Deployment
+Цель этого руководства — запустить один production-процесс, открыть панель, создать агента и безопасно подключить внешние каналы.
 
-### Prerequisites
-- GitHub account (https://github.com)
-- Git installed on your system
+## 1. Требования
 
-### Step 1: Create GitHub Repository
+- Node.js 20 или новее;
+- MySQL 8 или совместимая MariaDB;
+- публичный порт;
+- OpenRouter API key и/или Cerebras API keys для ответов агента;
+- Cartesia API key для минимальной задержки и/или Fish Audio API key для озвучивания;
+- HTTPS для настоящих телефонных звонков и webhook-провайдеров;
+- Redis и S3 — по необходимости.
 
-1. Go to https://github.com/new
-2. Enter repository name: `salesagent-ai`
-3. Add description: "AI-powered sales agent platform with multi-channel support"
-4. Choose visibility: Public or Private
-5. Click "Create repository"
-
-### Step 2: Push Code to GitHub
+## 2. Сборка
 
 ```bash
-cd /Users/admin/Documents/Проекты\ /Вайбкодинг/salesagent-ai
-
-# Add remote (replace YOUR_USERNAME with your GitHub username)
-git remote add origin https://github.com/YOUR_USERNAME/salesagent-ai.git
-git branch -M main
-git push -u origin main
+npm install
+npm --prefix admin install
+npm run typecheck
+npm test
+npm run build
+npm --prefix admin run build
 ```
 
-## Vercel Deployment
+Production entrypoint:
 
-### Frontend (React Admin App)
-
-The React admin dashboard (located in the `admin/` folder) can be deployed to Vercel:
-
-1. Go to https://vercel.com/new
-2. Connect your GitHub account
-3. Import the `salesagent-ai` repository
-4. Configure project:
-   - **Project Name**: salesagent-admin
-   - **Framework**: Vite
-   - **Root Directory**: `./admin`
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-
-5. Add Environment Variables:
-   ```
-   VITE_API_BASE_URL=https://your-backend-url.com
-   ```
-
-6. Click "Deploy"
-
-### Backend (Node.js/Express)
-
-The backend can be deployed to various platforms:
-
-#### Option A: Railway.app (Recommended for Node.js)
-
-1. Go to https://railway.app
-2. Click "New Project"
-3. Connect GitHub repository
-4. Configure environment variables (copy from .env.example)
-5. Deploy
-
-#### Option B: Render.com
-
-1. Go to https://render.com
-2. Create new Web Service
-3. Connect GitHub repository
-4. Configure:
-   - Build Command: `npm install && npm run build`
-   - Start Command: `npm start`
-   - Environment: Node
-5. Add environment variables from .env.example
-6. Deploy
-
-#### Option C: AWS EC2 with Docker
-
-```bash
-# Build Docker image
-docker build -t salesagent-ai .
-
-# Run container
-docker run -d \
-  --name salesagent-ai \
-  -p 3002:3002 \
-  -e DATABASE_URL=postgresql://user:pass@host:5432/salesagent \
-  -e REDIS_URL=redis://host:6379 \
-  salesagent-ai
+```text
+app.js
 ```
 
-## Docker Deployment
+Он запускает собранный backend. Готовая админ-панель обслуживается тем же Express-процессом.
 
-### Local Development with Docker Compose
+## 3. Минимальное окружение
 
-```bash
-# Start all services (PostgreSQL, Redis, MinIO, App)
-docker-compose up -d
-
-# View logs
-docker-compose logs -f app
-
-# Stop services
-docker-compose down
-```
-
-### Production Deployment
-
-Create a `.env` file with production values:
-
-```bash
-# Database
-DATABASE_URL=postgresql://user:password@postgres.example.com:5432/salesagent
-POSTGRES_PASSWORD=your_secure_password
-
-# Redis
-REDIS_URL=redis://redis.example.com:6379
-
-# S3/MinIO Storage
-S3_BUCKET=salesagent-recordings
-S3_ENDPOINT=https://minio.example.com
-S3_ACCESS_KEY=your_access_key
-S3_SECRET_KEY=your_secret_key
-
-# AI APIs
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=your_google_api_key
-
-# Messaging Platforms
-WHATSAPP_API_URL=https://api.wazzup24.com
-WHATSAPP_API_KEY=your_wazzup24_key
-TELEGRAM_BOT_TOKEN=your_telegram_token
-
-# Voice
-VOXIMPLANT_API_ACCOUNT_ID=your_account_id
-VOXIMPLANT_API_KEY=your_api_key
-
-# CRM
-AMOCRM_BASE_URL=https://your-account.amocrm.ru
-AMOCRM_CLIENT_ID=your_client_id
-AMOCRM_CLIENT_SECRET=your_client_secret
-
-# Admin
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your_secure_password
-JWT_SECRET=your_jwt_secret
-
-# Application
+```dotenv
 NODE_ENV=production
-PORT=3002
-DEMO_MODE=false
+PORT=3000
+APP_BUILD_ID=release-2026-07-28
+API_BASE_URL=https://sales.example.com
+PUBLIC_BASE_URL=https://sales.example.com
+FRONTEND_URL=https://sales.example.com
+AUTO_MIGRATE=true
+
+JWT_SECRET=случайная-строка-минимум-32-символа
+MYSQL_URL=mysql://user:url_encoded_password@host:3306/database
+REDIS_URL=memory
+
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_DEFAULT_MODEL=openrouter/auto
+OPENROUTER_STT_MODEL=deepgram/nova-3
+OPENROUTER_STT_FALLBACK_MODEL=openai/whisper-large-v3-turbo
+OPENROUTER_STT_LANGUAGE=ru
+CEREBRAS_API_KEYS=csk-key-1,csk-key-2
+CEREBRAS_DEFAULT_MODEL=gemma-4-31b
+CEREBRAS_FALLBACK_OPENROUTER_MODEL=openrouter/auto
+
+FISH_AUDIO_API_KEY=...
+FISH_AUDIO_DEFAULT_VOICE_ID=
+VOICE_WEBHOOK_SECRET=другой-случайный-секрет-минимум-24-символа
+ALLOW_INSECURE_VOICE_WEBHOOK=false
 ```
 
-## Post-Deployment Steps
+`FISH_AUDIO_API_KEY` — секрет доступа. `FISH_AUDIO_DEFAULT_VOICE_ID` — идентификатор голоса. Это разные значения.
 
-1. **Database Migration**
-   ```bash
-   npm run migrate
-   ```
+## 4. Миграции
 
-2. **Seed Demo Data** (optional)
-   ```bash
-   npm run seed
-   ```
-
-3. **Configure Webhooks**
-   - WhatsApp: Update webhook URL in Wazzup24 dashboard
-   - Telegram: Update webhook URL: `/telegram/webhook`
-   - Voice: Configure Voximplant scenario with your endpoint
-
-4. **Test Integration**
-   - Visit admin dashboard at your deployed URL
-   - Send test message through any channel
-   - Verify message appears in Conversations page
-   - Check agent response
-
-## Troubleshooting
-
-### Database Connection Issues
-- Ensure PostgreSQL is accessible from deployment environment
-- Check DATABASE_URL format: `postgresql://user:password@host:5432/dbname`
-- Verify pgvector extension is enabled: `CREATE EXTENSION IF NOT EXISTS vector;`
-
-### Missing Environment Variables
-- All variables in `.env.example` must be set in production
-- Use deployment platform's environment variable UI (Vercel, Railway, Render)
-
-### API Key Errors
-- Verify all third-party API keys are valid
-- Check that APIs have appropriate permissions/scopes
-- Ensure APIs are not rate-limited
-
-### WebSocket Connection Issues
-- Check firewall rules allow WebSocket connections
-- Verify WebSocket URLs are properly configured in frontend
-
-## Monitoring
-
-### Health Check
 ```bash
-curl https://your-app-url/health
+npm run migrate:dev
 ```
 
-### View Logs
-- Vercel: Dashboard → Deployments → Logs
-- Railway: Railway dashboard → Logs
-- Render: Service dashboard → Logs
+Команда применяет только ещё не выполненные SQL-миграции и записывает их имена в служебную таблицу. Повторный запуск безопасен. При `AUTO_MIGRATE=true` тот же механизм выполняется до старта HTTP-сервера.
 
-## Updates and Rollback
+## 5. Serverix / Pterodactyl без SSH
 
-### Push Updates
+Загрузите проект по SFTP, включая:
+
+- `app.js`;
+- `package.json` и lockfile;
+- backend bundle;
+- admin bundle;
+- миграции;
+- `.env`.
+
+В Startup укажите:
+
+```text
+Main file: app.js
+```
+
+После изменения backend bundle, зависимостей или `.env` нужен Restart. После изменения только статического admin bundle процесс обычно продолжит работать, но Restart всё равно рекомендуется для однозначного release-состояния.
+
+Права `.env`:
+
+```text
+600
+```
+
+Не используйте путь к вложенному `server.js`: ограничение Pterodactyl на длину Main file и текущая структура проекта рассчитаны на корневой `app.js`.
+
+## 6. HTTPS
+
+`sslip.io` сопоставляет IP с доменным именем, но не выдаёт сертификат и не создаёт reverse proxy. Let’s Encrypt должен быть настроен владельцем ingress/proxy или панелью хостинга.
+
+Если у контейнера нет доступа к входящим портам `80/443`, можно включить временный Cloudflare Quick Tunnel:
+
+```dotenv
+CLOUDFLARE_TUNNEL_MODE=quick
+```
+
+После запуска доверенный адрес записывается в `https-url.txt` и возвращается маршрутом `GET /https-url`. Он работает без SSH, собственного домена и открытых входящих портов, но меняется после каждого Restart. Для постоянного production-адреса используйте named Cloudflare Tunnel со своим доменом либо reverse proxy хостинга.
+
+Для постоянного Cloudflare hostname:
+
+```dotenv
+CLOUDFLARE_TUNNEL_MODE=named
+CLOUDFLARE_TUNNEL_TOKEN=секретный-токен-из-Cloudflare-Zero-Trust
+PUBLIC_BASE_URL=https://voice.example.com
+FRONTEND_URL=https://voice.example.com
+WEBHOOK_BASE_URL=https://voice.example.com
+```
+
+В Cloudflare настройте Public Hostname на локальный сервис `http://127.0.0.1:PORT`. Токен хранится только в `.env`.
+
+Без HTTPS:
+
+- панель может открываться по HTTP;
+- логины и JWT передаются без шифрования;
+- браузер может запретить микрофон;
+- production endpoint `/api/voice` возвращает `426`;
+- внешний Voximplant сценарий не считается готовым.
+
+Не включайте `ALLOW_INSECURE_VOICE_WEBHOOK=true` для постоянной production-работы.
+
+## 7. Распознавание речи через OpenRouter
+
+`deepgram/nova-3` вызывается через тот же `OPENROUTER_API_KEY`. Отдельный ключ Deepgram не нужен. Браузер записывает выбранный микрофон до паузы, затем backend отправляет аудиофрагмент в `/api/v1/audio/transcriptions`.
+
+При временной ошибке Nova-3 используется `OPENROUTER_STT_FALLBACK_MODEL`. Это turn-based STT: промежуточной транскрипции во время произнесения нет.
+
+## 8. Cerebras и OpenRouter
+
+В окружении можно одновременно настроить оба провайдера. `CEREBRAS_API_KEYS` принимает ключи через запятую:
+
+```dotenv
+CEREBRAS_API_KEYS=csk-key-1,csk-key-2,csk-key-3
+```
+
+Новые запросы Cerebras начинают с очередного ключа по кругу. При `401`, `403`, `429`, timeout или временной ошибке backend пробует следующий ключ. Если Cerebras недоступен полностью, запрос переходит на `CEREBRAS_FALLBACK_OPENROUTER_MODEL`. Если недоступен OpenRouter, используется `CEREBRAS_DEFAULT_MODEL`.
+
+В карточке агента провайдер и модель выбираются из каталога. Cerebras хранится с префиксом:
+
+```text
+cerebras/gemma-4-31b
+```
+
+Для OpenRouter сохраняется обычный model ID:
+
+```text
+openrouter/auto
+google/gemini-2.5-flash
+anthropic/claude-sonnet-4
+```
+
+Доступность ID определяется живым каталогом выбранного провайдера. Для RAG и CRM-инструментов выбирайте модель с поддержкой tool calling.
+
+## 9. Cartesia Sonic 3.5 и Fish Audio
+
+Для минимальной задержки используйте Cartesia:
+
+```env
+CARTESIA_API_KEY=sk_car_...
+CARTESIA_MODEL=sonic-3.5
+CARTESIA_DEFAULT_VOICE_ID=779673f3-895f-4935-b6b5-b031dc78b319
+```
+
+Sonic 3.5 отдаёт MP3 потоком. В карточке агента можно выбрать любой русский голос Cartesia. Fish Audio сохраняется как второй выбираемый провайдер и автоматический fallback. API-ключи хранятся только в окружении; в `voiceId` записывается UUID/ID голоса.
+
+Если оба провайдера синтеза недоступны, backend вернёт текст и пометит ответ как TTS fallback. Проверяйте квоту, корректность voice ID и логи провайдера.
+
+## 10. Voximplant
+
+Сценарий должен:
+
+1. принять входящий звонок;
+2. распознать речь;
+3. отправить JSON на `https://ваш-домен/api/voice`;
+4. передать `X-Voice-Secret`;
+5. воспроизвести `audio_url` или использовать провайдерный TTS fallback;
+6. повторять цикл до завершения звонка.
+
+В custom data сценария задайте ID агента и тот же voice secret. Таймаут внешнего сценария должен учитывать задержку LLM и TTS.
+
+## 11. WhatsApp и Telegram
+
+WhatsApp URL:
+
+```text
+https://ваш-домен/api/webhooks/whatsapp/ORG_ID
+```
+
+Нужны `WAZZUP24_API_KEY`, `WAZZUP24_CHANNEL_ID` и `WAZZUP24_WEBHOOK_SECRET`.
+
+Telegram URL:
+
+```text
+https://ваш-домен/api/webhooks/telegram/ORG_ID
+```
+
+Нужны `TELEGRAM_BOT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET`. При вызове Telegram `setWebhook` передайте секрет как `secret_token`.
+
+`ORG_ID` виден внутри раздела «Справка и настройка».
+
+## 12. Redis и записи
+
+`REDIS_URL=memory` подходит для первой проверки: фоновые workers отключены. Для очередей классификации и follow-up используйте постоянный Redis.
+
+Для записей настройте S3-совместимые endpoint, access key, secret key, region и bucket. Без S3 разговоры работают, но экран записей будет пуст.
+
+## 13. Проверка после запуска
+
 ```bash
-git add .
-git commit -m "Feature: Add new functionality"
-git push origin main
+curl -i https://ваш-домен/health
 ```
 
-### Automatic Redeployment
-- Vercel: Automatically redeploys on push to main
-- Railway/Render: Configure auto-deployment in dashboard
+Ожидается `200` и JSON `{"status":"ok",...}`.
 
-### Rollback
-- Revert commit: `git revert <commit-hash>`
-- Redeploy from previous deployment in platform dashboard
+Затем:
+
+1. откройте форму регистрации;
+2. войдите;
+3. откройте «Справка и настройка»;
+4. убедитесь, что MySQL, хотя бы один AI-провайдер, Cartesia или Fish Audio и HTTPS зелёные;
+5. загрузите небольшой документ;
+6. создайте агента;
+7. проверьте чат;
+8. проверьте браузерный звонок;
+9. только после этого подключайте внешние webhooks.
+
+## 14. Диагностика
+
+| Симптом | Причина или действие |
+|---|---|
+| Белый экран | Проверьте admin bundle, CSP и сделайте жёсткое обновление |
+| Startup падает на env | Исправьте переменную, указанную в сообщении Zod |
+| `401` webhook | Передан неверный секрет |
+| `503` webhook | Соответствующий секрет не задан |
+| `426` voice | Нужен HTTPS |
+| Агент не отвечает | Нет ключей AI-провайдера, неверный model ID или исчерпаны квоты всех ключей |
+| Есть текст, нет звука | Ключ выбранного Cartesia/Fish Audio, voice ID или квота; при наличии второго TTS он используется как fallback |
+| Нет агента в voice test | Агент неактивен или не включён канал `voice` |
+| Нет записей | Не настроено S3 или телефонный сценарий не загружает запись |
+
+Секреты никогда не публикуйте в логах, документации, скриншотах или Git.

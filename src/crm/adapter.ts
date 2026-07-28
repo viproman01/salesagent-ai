@@ -1,6 +1,7 @@
 import pool from '../db';
 import { getAmoCRMClient } from './amocrm';
 import { logger } from '../utils/logger';
+import { randomUUID } from 'crypto';
 
 /**
  * Унифицированный CRM-адаптер.
@@ -15,7 +16,7 @@ export async function updateLeadStage(
   // 1. Обновляем в нашей БД
   await pool.query(
     `UPDATE leads
-     SET stage = $1::lead_stage, last_contact_at = NOW(), updated_at = NOW()
+     SET stage = $1, last_contact_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
      WHERE id = $2 AND org_id = $3`,
     [stage, leadId, orgId]
   );
@@ -58,7 +59,8 @@ export async function getOrCreateLead(
   source: string
 ): Promise<{ id: string; isNew: boolean }> {
   // Нормализуем телефон
-  const normalizedPhone = phone.replace(/\D/g, '');
+  const digits = phone.replace(/\D/g, '');
+  const normalizedPhone = digits.length >= 5 ? digits : phone.trim().slice(0, 30);
 
   // Ищем существующий лид
   const existing = await pool.query<{ id: string }>(
@@ -70,13 +72,12 @@ export async function getOrCreateLead(
   }
 
   // Создаём новый лид
-  const result = await pool.query<{ id: string }>(
-    `INSERT INTO leads (org_id, phone, source, stage)
-     VALUES ($1, $2, $3, 'new')
-     RETURNING id`,
-    [orgId, normalizedPhone, source]
+  const newLeadId = randomUUID();
+  await pool.query(
+    `INSERT INTO leads (id, org_id, phone, source, stage)
+     VALUES ($1, $2, $3, $4, 'new')`,
+    [newLeadId, orgId, normalizedPhone, source]
   );
-  const newLeadId = result.rows[0]!.id;
 
   // Создаём в AmoCRM (если подключено)
   try {

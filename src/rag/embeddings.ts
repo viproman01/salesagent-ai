@@ -1,53 +1,34 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from '../config';
-import { logger } from '../utils/logger';
 
-const genai = new GoogleGenerativeAI(config.GOOGLE_API_KEY);
-const embeddingModel = genai.getGenerativeModel({ model: config.GEMINI_EMBED_MODEL });
+interface EmbeddingResponse { data?: Array<{ embedding?: number[] }>; error?: { message?: string }; }
 
-/**
- * Генерировать embedding вектор (768 измерений) для текста
- * Используется Google text-embedding-004
- */
-export async function generateEmbedding(text: string): Promise<number[]> {
-  const result = await embeddingModel.embedContent({
-    content: { parts: [{ text }], role: 'user' },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    taskType: 'RETRIEVAL_DOCUMENT' as any,
+export async function generateEmbedding(text: string, inputType: 'search_document' | 'search_query' = 'search_document'): Promise<number[]> {
+  if (!config.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input: text, model: config.OPENROUTER_EMBEDDING_MODEL, input_type: inputType }),
   });
-  return result.embedding.values;
+  const payload = await response.json() as EmbeddingResponse;
+  const embedding = payload.data?.[0]?.embedding;
+  if (!response.ok || !embedding) throw new Error(`OpenRouter embeddings: ${payload.error?.message ?? response.statusText}`);
+  return embedding;
 }
 
-/**
- * Генерировать embedding для поискового запроса
- * (другой taskType — RETRIEVAL_QUERY)
- */
-export async function generateQueryEmbedding(query: string): Promise<number[]> {
-  const result = await embeddingModel.embedContent({
-    content: { parts: [{ text: query }], role: 'user' },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    taskType: 'RETRIEVAL_QUERY' as any,
-  });
-  return result.embedding.values;
-}
+export async function generateQueryEmbedding(query: string): Promise<number[]> { return generateEmbedding(query, 'search_query'); }
 
-/**
- * Пакетная генерация embeddings (с задержкой для rate limit)
- */
-export async function generateEmbeddingsBatch(
-  texts: string[],
-  batchSize = 5,
-  delayMs = 200
-): Promise<number[][]> {
-  const results: number[][] = [];
-  for (let i = 0; i < texts.length; i += batchSize) {
-    const batch = texts.slice(i, i + batchSize);
-    const batchResults = await Promise.all(batch.map(t => generateEmbedding(t)));
-    results.push(...batchResults);
-    if (i + batchSize < texts.length) {
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-    logger.debug(`Embeddings: ${Math.min(i + batchSize, texts.length)}/${texts.length}`);
+export async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
+  if (!config.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
+  const batches: number[][] = [];
+  for (let index = 0; index < texts.length; index += 16) {
+    const input = texts.slice(index, index + 16);
+    const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
+      method: 'POST', headers: { Authorization: `Bearer ${config.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, model: config.OPENROUTER_EMBEDDING_MODEL, input_type: 'search_document' }),
+    });
+    const payload = await response.json() as EmbeddingResponse;
+    if (!response.ok || !payload.data?.every(item => Array.isArray(item.embedding))) throw new Error(`OpenRouter embeddings: ${payload.error?.message ?? response.statusText}`);
+    batches.push(...payload.data.map(item => item.embedding!));
   }
-  return results;
+  return batches;
 }

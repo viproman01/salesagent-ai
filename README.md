@@ -1,228 +1,112 @@
 # SalesAgent AI
 
-**AI-платформа для автоматизации продаж**: голосовые звонки, WhatsApp/Telegram, автоматическое управление CRM для SMB-бизнеса в Казахстане и России.
+Платформа AI-продавцов для текстовых и голосовых каналов. Один агент использует базу знаний компании, ведёт историю клиента, вызывает инструменты CRM и отвечает голосом через Cartesia Sonic 3.5 или Fish Audio.
 
-## Технологический стек
+## Что работает
 
-| Компонент   | Технология |
-|-------------|-----------|
-| Backend     | Node.js 20 + Express + TypeScript |
-| Database    | PostgreSQL 16 + pgvector |
-| Cache/Queue | Redis + BullMQ |
-| AI Voice    | Google Gemini Live (`gemini-3.1-flash-live-preview`) |
-| AI Text     | Anthropic Claude (`claude-sonnet-4-20250514`) |
-| Classifier  | Claude Haiku (`claude-haiku-4-5-20251001`) |
-| Телефония   | Voximplant |
-| WhatsApp    | Wazzup24 API |
-| Telegram    | Telegram Bot API |
-| CRM         | AmoCRM REST API v4 |
-| Storage     | S3 / MinIO |
-| Frontend    | React 18 + Tailwind CSS + Vite |
-| Deploy      | Docker Compose |
+- регистрация организаций и JWT-аутентификация;
+- модели Cerebras и OpenRouter по model ID с автоматическим fallback;
+- RAG по документам PDF, CSV, TXT и Markdown;
+- инструменты поиска знаний, обновления лида, встречи и WhatsApp;
+- браузерный чат и голосовой тест;
+- выбор микрофона и аудиовыхода; распознавание `deepgram/nova-3` через OpenRouter;
+- двухконтурный голосовой ответ: Gemma 4 на Cerebras отвечает сразу, DeepSeek V4 Pro анализирует сложные вопросы в фоне;
+- потоковый Cartesia Sonic 3.5 с русскими голосами, Fish Audio fallback и закреплённым voice ID для каждого агента;
+- WhatsApp через Wazzup24 и Telegram Bot webhooks;
+- HTTP-интеграция Voximplant для телефонных звонков;
+- разговоры, лиды, записи и метрики в MySQL/MariaDB;
+- светлая и тёмная тема;
+- встроенный раздел «Справка и настройка».
 
----
+## Документация
 
-## Быстрый старт / Quick Start
+- [Руководство пользователя](docs/USER_GUIDE.md) — полный путь от регистрации до тестового звонка и описание каждого поля.
+- [Руководство по развёртыванию](DEPLOYMENT.md) — переменные окружения, MySQL, Serverix/Pterodactyl, HTTPS и проверка.
+- [.env.example](.env.example) — полный шаблон конфигурации без секретов.
 
-### 1. Клонирование и настройка
+Та же пользовательская документация доступна после входа в разделе «Справка и настройка». Он дополнительно показывает текущую готовность провайдеров без раскрытия ключей.
+
+## Стек
+
+| Область | Реализация |
+|---|---|
+| Backend | Node.js 20+, Express 5, TypeScript |
+| Database | MySQL 8 / MariaDB |
+| AI | Cerebras/OpenRouter Chat Completions, OpenRouter embeddings |
+| STT | OpenRouter Audio Transcriptions, `deepgram/nova-3` с Whisper fallback |
+| Voice | Cartesia Sonic 3.5 / Fish Audio TTS |
+| Telephony | Voximplant HTTP scenario |
+| Queues | Redis и BullMQ; режим `memory` для одиночного тестового процесса |
+| Frontend | React 18, TanStack Query, Tailwind CSS, Vite |
+| Storage | S3-совместимое хранилище записей |
+
+## Быстрый локальный запуск
 
 ```bash
-git clone <repo>
-cd salesagent-ai
 cp .env.example .env
-# Отредактируйте .env и заполните ключи API
-```
-
-### 2. Запуск с Docker Compose
-
-```bash
-docker-compose up -d
-```
-
-Сервисы:
-- **Backend API**: http://localhost:3000
-- **Admin UI**:    http://localhost:5173
-- **MinIO Console**: http://localhost:9001 (minioadmin/minioadmin)
-- **PostgreSQL**: localhost:5432
-
-### 3. Применение миграций и сидирование
-
-```bash
-# Установка зависимостей
 npm install
-
-# Миграции (выполняются автоматически через docker-entrypoint)
+npm --prefix admin install
 npm run migrate:dev
-
-# Тестовые данные (org + agent "Айгуль" + база знаний + лиды)
-npm run seed
+npm run build
+npm --prefix admin run build
+npm start
 ```
 
-**Тестовые данные:**
-- Email: `demo@flowers.kz`
-- Пароль: `demo1234`
+Откройте адрес из `PUBLIC_BASE_URL` или `http://localhost:3000`. Создайте организацию через форму регистрации. Демо-паролей в репозитории нет.
 
----
-
-## Разработка / Development
+Для разработки:
 
 ```bash
-# Backend
-npm install
 npm run dev
-
-# Frontend (в другом терминале)
-cd admin
-npm install
-npm run dev
+npm --prefix admin run dev
 ```
 
----
-
-## Переменные окружения
-
-| Переменная | Описание |
-|-----------|---------|
-| `ANTHROPIC_API_KEY` | Ключ Anthropic Claude API |
-| `GOOGLE_API_KEY` | Ключ Google AI (Gemini + Embeddings) |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `WAZZUP24_API_KEY` | API-ключ Wazzup24 для WhatsApp |
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram Bot |
-| `VOXIMPLANT_ACCOUNT_ID` | ID аккаунта Voximplant |
-| `AMOCRM_CLIENT_ID` | OAuth Client ID для AmoCRM |
-| `JWT_SECRET` | Секрет для подписи JWT (мин. 32 символа) |
-| `S3_ENDPOINT` | Endpoint S3/MinIO |
-
-Полный список — в `.env.example`.
-
----
-
-## API Endpoints
-
-### REST API
-
-| Метод | Путь | Описание |
-|-------|------|---------|
-| POST | `/api/v1/auth/register` | Регистрация организации |
-| POST | `/api/v1/auth/login` | Вход |
-| GET  | `/api/v1/dashboard/:orgId` | Метрики дашборда |
-| GET  | `/api/v1/conversations/:orgId` | Список разговоров |
-| GET  | `/api/v1/conversations/:id/messages` | Сообщения разговора |
-| POST | `/api/v1/knowledge/upload` | Загрузить документ в базу знаний |
-| GET  | `/api/v1/knowledge/search?q=` | Поиск по базе знаний |
-| GET/POST/PUT | `/api/v1/agents` | CRUD агентов |
-| GET  | `/api/v1/recordings/:id/audio` | Presigned URL записи |
-| GET  | `/api/v1/recordings/:id/transcript` | Транскрипт записи |
-
-### Webhooks
-
-| Метод | Путь | Описание |
-|-------|------|---------|
-| POST | `/api/webhooks/whatsapp` | Входящие WhatsApp (Wazzup24) |
-| POST | `/api/webhooks/telegram` | Обновления Telegram Bot |
-| POST | `/api/webhooks/voximplant` | События звонков Voximplant |
-
-### WebSocket
-
-| Путь | Описание |
-|------|---------|
-| `WS /ws/voice?orgId=&phone=` | Аудиострим голосового звонка |
-
----
-
-## Архитектура
-
-```
-Входящее сообщение (WhatsApp/Telegram/Voice)
-         │
-         ▼
-  session-manager.ts — найти/создать лид и разговор
-         │
-         ▼
-  claude-client.ts — Tool Use Loop
-    ├── search_knowledge() → pgvector RAG
-    ├── update_lead()      → AmoCRM sync
-    ├── book_meeting()     → schedule meeting
-    └── send_whatsapp()    → follow-up
-         │
-         ▼
-  Ответ отправляется обратно в канал
-         │
-         ▼ (async)
-  classifier.ts (Claude Haiku) → обновить этап лида
-```
-
----
-
-## Структура проекта
-
-```
-salesagent-ai/
-├── src/
-│   ├── index.ts              — Express сервер
-│   ├── config.ts             — Конфиг с Zod-валидацией
-│   ├── db.ts                 — PostgreSQL пул
-│   ├── ai/
-│   │   ├── claude-client.ts  — Claude с tool use loop
-│   │   ├── gemini-live.ts    — Gemini Live WebSocket мост
-│   │   └── tools.ts          — 4 инструмента
-│   ├── rag/
-│   │   ├── embeddings.ts     — Google text-embedding-004
-│   │   ├── chunker.ts        — 500 токенов с overlap
-│   │   └── search.ts         — pgvector поиск
-│   ├── channels/
-│   │   ├── whatsapp.ts       — Wazzup24
-│   │   ├── telegram.ts       — Telegram Bot
-│   │   └── voice.ts          — Voximplant + Gemini Live
-│   ├── crm/
-│   │   ├── amocrm.ts         — AmoCRM REST клиент
-│   │   └── adapter.ts        — Унифицированный адаптер
-│   ├── orchestrator/
-│   │   ├── session-manager.ts — Жизненный цикл разговора
-│   │   ├── classifier.ts      — Пост-диалоговая классификация
-│   │   └── follow-up.ts       — Автоматические follow-up
-│   ├── api/                  — REST эндпоинты
-│   ├── analytics/            — Агрегация метрик
-│   └── utils/                — Логгер, аудио конвертер
-├── migrations/               — SQL миграции
-├── admin/                    — React SPA
-│   └── src/
-│       ├── pages/            — Dashboard, Conversations, ...
-│       └── components/       — Sidebar, MetricCard, ...
-└── scripts/                  — Миграции, сидирование
-```
-
----
-
-## Деплой на Hetzner VPS
+## Проверки
 
 ```bash
-# 1. Клонировать репозиторий на сервер
-git clone <repo> /opt/salesagent
-cd /opt/salesagent
-
-# 2. Заполнить .env
-cp .env.example .env
-nano .env
-
-# 3. Запустить
-docker-compose up -d --build
-
-# 4. Применить миграции
-docker-compose exec app npm run migrate:dev
-
-# 5. Сидировать демо-данные
-docker-compose exec app npm run seed
-
-# 6. Зарегистрировать webhooks (после настройки домена)
-curl -X POST https://api.wazzup24.com/v3/webhooks \
-  -H "Authorization: Bearer $WAZZUP24_API_KEY" \
-  -d '{"webhooksUri":"https://your-domain.com/api/webhooks/whatsapp"}'
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm --prefix admin run build
+npm audit
+npm --prefix admin audit
 ```
 
----
+## Основные API
 
-## License
+Все маршруты `/api/v1/*`, кроме регистрации и входа, требуют `Authorization: Bearer <JWT>`.
+
+| Метод | Маршрут | Назначение |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Создать организацию и администратора |
+| `POST` | `/api/v1/auth/login` | Получить JWT |
+| `GET/POST/PUT/DELETE` | `/api/v1/agents` | Управление агентами |
+| `POST` | `/api/v1/chat` | Текстовый тест выбранного агента |
+| `POST` | `/api/v1/voice/respond` | Авторизованный браузерный voice turn |
+| `POST` | `/api/v1/voice/sessions` | Создать голосовую тестовую сессию |
+| `POST` | `/api/v1/voice/sessions/:id/utterances` | Распознать аудиореплику и получить голосовой ответ |
+| `GET` | `/api/v1/voice/sessions/:id/background` | Статус фонового анализа сложного вопроса |
+| `POST` | `/api/v1/voice/sessions/:id/background/:taskId/deliver` | Передать готовый глубокий вывод в голосовой диалог |
+| `POST` | `/api/v1/voice/sessions/:id/background/:taskId/dismiss` | Скрыть устаревший глубокий вывод |
+| `GET/POST/DELETE` | `/api/v1/knowledge` | Документы и RAG-поиск |
+| `GET` | `/api/v1/conversations/:orgId` | Разговоры организации |
+| `GET` | `/api/v1/recordings` | Записи звонков |
+| `GET` | `/api/v1/providers/status` | Готовность интеграций без секретов |
+| `GET` | `/api/v1/providers/models` | Доступные модели Cerebras и OpenRouter |
+| `GET` | `/https-url` | Текущий временный HTTPS-адрес Cloudflare Tunnel |
+| `POST` | `/api/voice` | Публичный HTTPS endpoint Voximplant с `X-Voice-Secret` |
+| `POST` | `/api/webhooks/whatsapp/:orgId` | Wazzup24 webhook с секретом |
+| `POST` | `/api/webhooks/telegram/:orgId` | Telegram webhook с secret token |
+
+## Безопасность
+
+- Публичный voice endpoint в production отклоняет обычный HTTP.
+- Webhook-обработчики требуют отдельные секреты и дедуплицируют события.
+- Организация берётся из JWT или защищённого webhook URL; автоматического выбора «первой организации» нет.
+- API-ключи не возвращаются в админ-панель.
+- `.env` не должен попадать в Git и должен иметь права только для владельца процесса.
+
+## Лицензия
 
 MIT
